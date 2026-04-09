@@ -1059,11 +1059,11 @@ function selectAnalysisDay(idx,src=allDays){
 function exportCSV(){
   const targetDays=allDays.length?allDays:[rtDayData].filter(Boolean);
   if(!targetDays.length){showStatus('csvStatus','保存するデータがありません','warn');return;}
-  let csv='日付,レース,馬番1着,馬番2着,馬番3着,枠1,枠2,枠連,1着人気\n';
+  let csv='日付,レース,馬番1着,馬番2着,馬番3着,枠1,枠2,枠連,1着人気,2着人気,3着人気\n';
   targetDays.forEach(day=>{
     for(let r=1;r<=12;r++){
       const d=getRace(day,r);if(!d)continue;
-      csv+=`${day.date},${r}R,${d.uma[0]||''},${d.uma[1]||''},${d.uma[2]||''},${d.frames[0]||''},${d.frames[1]||''},${d.kura.join('-')},${d.pop1||''}\n`;
+      csv+=`${day.date},${r}R,${d.uma[0]||''},${d.uma[1]||''},${d.uma[2]||''},${d.frames[0]||''},${d.frames[1]||''},${d.kura.join('-')},${d.pop1||''},${d.pop2||''},${d.pop3||''}\n`;
     }
   });
   const blob=new Blob([csv],{type:'text/csv;charset=utf-8;'});
@@ -1088,6 +1088,8 @@ function importCSV(input){
       const u1=parseInt(cols[2]),u2=parseInt(cols[3]),u3=parseInt(cols[4]);
       const f1=parseInt(cols[5]),f2=parseInt(cols[6]);
       const pop1=parseInt(cols[8])||0;
+      const pop2=parseInt(cols[9])||0;
+      const pop3=parseInt(cols[10])||0;
       if(!date||isNaN(rn)||isNaN(u1))return;
       if(!dayMap[date])dayMap[date]={date,races:{}};
       const rows=[];
@@ -1095,7 +1097,7 @@ function importCSV(input){
       if(!isNaN(u2)&&u2>0)rows.push({ord:2,frame:f2||0,num:u2});
       if(!isNaN(u3)&&u3>0)rows.push({ord:3,frame:0,num:u3});
       const kStr=cols[7]?cols[7].split('-').map(Number).filter(n=>!isNaN(n)&&n>0):[];
-      dayMap[date].races[rn]={n:rn,rows,kura:kStr.length>=2?kStr:[Math.min(f1||0,f2||0),Math.max(f1||0,f2||0)].filter(x=>x>0),pop1};
+      dayMap[date].races[rn]={n:rn,rows,kura:kStr.length>=2?kStr:[Math.min(f1||0,f2||0),Math.max(f1||0,f2||0)].filter(x=>x>0),pop1,pop2,pop3};
     });
     const parsed=Object.values(dayMap).filter(d=>Object.keys(d.races).length>0);
     if(!parsed.length){showStatus('csvStatus','CSVを読み込めませんでした','warn');return;}
