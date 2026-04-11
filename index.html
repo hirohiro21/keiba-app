@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>ヒロ式ロジック v17</title>
+<title>ヒロ式ロジック v21</title>
 <style>
 :root{
   --bg:#0f0f0f;--bg2:#181818;--bg3:#222;--bg4:#2a2a2a;
@@ -78,7 +78,7 @@ input:focus{border-color:var(--go);}
 .mred{background:var(--rd);color:var(--rdt);}
 .mgold{background:rgba(201,168,76,.12);color:var(--go);border:1px solid rgba(201,168,76,.25);}
 .stitle{font-size:10px;font-weight:600;color:var(--tx3);margin:10px 0 5px;text-transform:uppercase;letter-spacing:.5px;}
-.popgrid{display:grid;grid-template-columns:repeat(6,1fr);gap:5px;margin-bottom:8px;}
+.popgrid{display:grid;grid-template-columns:repeat(4,1fr);gap:5px;margin-bottom:8px;}
 .popcell{background:var(--bg3);border:1px solid var(--bd);border-radius:6px;padding:6px;}
 .popcell .cn{font-size:10px;color:var(--go);margin-bottom:3px;}
 .kgrid{display:grid;grid-template-columns:repeat(8,1fr);gap:4px;margin-top:6px;}
@@ -114,7 +114,7 @@ tr.miss td{background:rgba(123,45,45,.15);}
 <body>
 <div class="hdr">
   <div><div class="logo">HIRO LOGIC</div><div class="logo-sub">競馬出目パズル分析システム</div></div>
-  <div class="ver">v17.0</div>
+  <div class="ver">v21.0</div>
 </div>
 <div class="wrap">
   <div class="tabs">
@@ -263,7 +263,7 @@ function initPopGrid(id,maxN){
   const g=document.getElementById(id);if(!g)return;
   g.innerHTML='';
   for(let i=1;i<=maxN;i++)
-    g.innerHTML+=`<div class="popcell"><div class="cn">馬${i}</div><input type="number" id="${id}-${i}" placeholder="人気" min="1" max="${maxN}" style="font-size:11px;padding:3px 5px;width:100%;"></div>`;
+    g.innerHTML+=`<div class="popcell"><div class="cn">馬${i}</div><div style="display:flex;gap:3px;"><input type="number" id="${id}-frame-${i}" placeholder="枠" min="1" max="8" style="font-size:11px;padding:3px 4px;width:38px;"><input type="number" id="${id}-${i}" placeholder="人気" min="1" max="${maxN}" style="font-size:11px;padding:3px 4px;width:38px;"></div></div>`;
 }
 
 function setMode(m){
@@ -415,11 +415,12 @@ function analyzeFrameChain(day,maxR){
     let type='';
     if(cnt===1&&inLast)type=`${f}枠が${maxR}Rで初出現→2回目狙い`;
     else if(cnt===2)type=`${f}枠が${cnt}回→3回目狙い`;
-    else if(cnt===3)type=`${f}枠が${cnt}回→4回目狙い`;
+    else if(cnt===3)type=`${f}枠が${cnt}回→4回目狙い★`;  // 奇数→偶数
     else if(cnt===4)type=`${f}枠が${cnt}回→5回目狙い`;
-    else if(cnt>=5)type=`${f}枠が${cnt}回→収束(6回目)`;
+    else if(cnt>=5)type=`${f}枠が${cnt}回→6回目収束★`;   // 奇数→偶数
     if(type){
-      const priority=cnt===2?3:cnt===3?2:cnt===1?1:cnt>=5?4:1;
+      // 奇数回→偶数回（3→4、5→6）を最優先
+      const priority=cnt===5?6:cnt===3?5:cnt===2?3:cnt===1?1:cnt===4?2:1;
       targets.push({frame:Number(f),cnt,type,priority});
     }
   });
@@ -441,8 +442,34 @@ function predictTargetFrame(day,targetR){
   const frameScore={1:0,2:0,3:0,4:0,5:0,6:0,7:0,8:0};
   const frameReasons={1:[],2:[],3:[],4:[],5:[],6:[],7:[],8:[]};
   Object.entries(frame.cnt).forEach(([f,c])=>{
-    if(c>=5){frameScore[f]+=3;frameReasons[f].push(`${f}枠が${c}回出現→収束`);}
-    else if(c>=4){frameScore[f]+=1.5;frameReasons[f].push(`${f}枠が${c}回出現`);}
+    const fNum=Number(f);
+    const isOuter=fNum>=7;
+    const justHit6=c>=6&&frame.lastRaceKura&&frame.lastRaceKura.includes(fNum);
+    const inLast=frame.lastRaceKura&&frame.lastRaceKura.includes(fNum);
+    if(justHit6){
+      frameScore[fNum]-=5;
+      frameReasons[fNum].push(`${f}枠収束済み→次レース除外`);
+    } else if(c>=6&&!isOuter){
+      frameScore[fNum]-=3;
+      frameReasons[fNum].push(`${f}枠収束済み（内枠）→狙わない`);
+    } else if(c>=6&&isOuter){
+      frameScore[fNum]+=1;
+      frameReasons[fNum].push(`${f}枠が${c}回→外枠7回目あり得る`);
+    } else if(c===5){
+      // 奇数5回→偶数6回目が最優先
+      frameScore[fNum]+=5;
+      frameReasons[fNum].push(`${f}枠が${c}回→6回目収束★最優先`);
+    } else if(c===3){
+      // 奇数3回→偶数4回目も強く狙う
+      frameScore[fNum]+=3.5;
+      frameReasons[fNum].push(`${f}枠が${c}回→4回目狙い★`);
+    } else if(c===4){
+      frameScore[fNum]+=1.5;
+      frameReasons[fNum].push(`${f}枠が${c}回出現`);
+    } else if(c===1&&inLast){
+      frameScore[fNum]+=1;
+      frameReasons[fNum].push(`${f}枠が初出現→2回目狙い`);
+    }
   });
   let p7=false,p5=false,prev7R=0,prev5R=0;
   for(let r=1;r<=maxR;r++){
@@ -566,8 +593,23 @@ function analyzeChain(day,maxR){
 function analyzeFrame(day,maxR){
   const cnt={1:0,2:0,3:0,4:0,5:0,6:0,7:0,8:0};
   const alerts=[];
+  // 直前レース（maxR）で出た枠を記録
+  const lastRaceKura=getRace(day,maxR)?getRace(day,maxR).kura:[];
   for(let r=1;r<=maxR;r++){const d=getRace(day,r);if(!d)continue;d.kura.forEach(k=>{if(cnt[k]!==undefined)cnt[k]++;});}
-  Object.entries(cnt).forEach(([f,c])=>{if(c>=5)alerts.push(`${f}枠が${c}回→6回目を狙う`);});
+  Object.entries(cnt).forEach(([f,c])=>{
+    const fNum=Number(f);
+    const isOuter=fNum>=7; // 外枠（7・8枠）
+    const justHit6=c>=6&&lastRaceKura.includes(fNum); // 直前レースで6回目が出た
+    if(justHit6){
+      // 6回目が直前レースで出た→次は除外に近いレベル
+      alerts.push(`${f}枠が${c}回→収束済み！次レースは狙わない`);
+    } else if(c>=6){
+      if(isOuter)alerts.push(`${f}枠が${c}回→外枠のみ7回目あり得る`);
+      else alerts.push(`${f}枠が${c}回→収束済み・内枠は次レース狙わない`);
+    } else if(c>=5){
+      alerts.push(`${f}枠が${c}回→6回目を狙う（強アラート）`);
+    }
+  });
   let p7=false,p5=false;
   for(let r=1;r<=maxR;r++){
     const d=getRace(day,r);if(!d)continue;
@@ -577,7 +619,7 @@ function analyzeFrame(day,maxR){
   }
   const grp={A:0,B:0,C:0};
   for(let r=1;r<=maxR;r++){const d=getRace(day,r);if(!d)continue;d.kura.forEach(k=>{if([1,4,7].includes(k))grp.A++;else if([2,5,8].includes(k))grp.B++;else if([3,6].includes(k))grp.C++;});}
-  return{cnt,alerts,grp};
+  return{cnt,alerts,grp,lastRaceKura};
 }
 
 function analyzePop(day,maxR){
@@ -594,7 +636,18 @@ function analyzeMirror(day){
   if(!r3||!r9||!r10)return{active:false};
   const chain9=r4?r4.uma.filter(u=>r9.uma.includes(u)):[];
   const mirror3in10=r3.uma.filter(u=>r10.uma.includes(u));
-  return{active:chain9.length===0&&mirror3in10.length>0,chain9broken:chain9.length===0,mirror3in10,mirror2pred:r2?r2.uma:[]};
+  // ★前提条件：6R↔7R（核）と5R↔8Rが成立していること
+  const r6=getRace(day,6),r7=getRace(day,7),r5=getRace(day,5),r8=getRace(day,8);
+  const core67=r6&&r7?r6.uma.filter(u=>r7.uma.includes(u)).length>0:false;
+  const fold58=r5&&r8?r5.uma.filter(u=>r8.uma.includes(u)).length>0:false;
+  const prereqOk=core67&&fold58;
+  return{
+    active:prereqOk&&chain9.length===0&&mirror3in10.length>0,
+    prereqOk,core67,fold58,
+    chain9broken:chain9.length===0,
+    mirror3in10,
+    mirror2pred:r2?r2.uma:[]
+  };
 }
 
 function getAxisCandidates(day,targetR,popMap={}){
@@ -613,13 +666,15 @@ function getAxisCandidates(day,targetR,popMap={}){
   fold.filter(f=>(f.isPred||f.isRef)&&f.common.length).forEach(f=>f.common.forEach(n=>add(n,f.label,f.isPred?3:1.5)));
   brother.forEach(b=>{
     b.chains.forEach(c=>{
-      // ★12R予測時：11Rが含まれる兄弟連鎖はスコアを0.5倍に抑える
+      // ★12R予測時：11Rが含まれる兄弟連鎖は完全スキップ
       const has11R=(c.rA===11||c.rB===11)&&targetR===12;
-      const baseScore=c.rB>=7?2.5:1.5;
-      const score=has11R?baseScore*0.5:baseScore;
+      if(has11R)return; // 完全除外
+      const score=c.rB>=7?2.5:1.5;
       c.common.forEach(u=>add(u,`兄弟連鎖(${b.name} ${c.rA}R↔${c.rB}R)`,score));
     });
-    b.recurring.filter(x=>x.count>=2).forEach(x=>add(x.uma,`兄弟${x.count}回出現(${b.name})`,1));
+    // ★12R予測時：中列(2-5-8-11R)のrecurringは11Rデータが混入するので除外
+    const skipRecurring=targetR===12&&b.name.includes('中列');
+    if(!skipRecurring)b.recurring.filter(x=>x.count>=2).forEach(x=>add(x.uma,`兄弟${x.count}回出現(${b.name})`,1));
   });
   chain.signals.forEach(s=>add(s.uma,`馬番連鎖(${s.type})`,1.5));
   if(mirror.active&&targetR===11)mirror.mirror2pred.forEach(u=>add(u,'鏡面復活(2R→11R)',2));
@@ -635,7 +690,7 @@ function getAxisCandidates(day,targetR,popMap={}){
   return sorted.slice(0,2);
 }
 
-function showPrediction(day,targetR,popMap={}){
+function showPrediction(day,targetR,popMap={},frameMap={}){
   const label=targetR===11?'11R':'12R';
   document.getElementById('predict-label').textContent=`${label} 軸馬予測（1R〜${targetR-1}Rのデータで分析）`;
   const final=getAxisCandidates(day,targetR,popMap);
@@ -649,7 +704,8 @@ function showPrediction(day,targetR,popMap={}){
     html+=`<div class="axwrap">`;
     final.forEach(([uma,info],idx)=>{
       const p=popMap[uma];const pg=p?popGroup(p):'?';
-      html+=`<div class="axcard"><div style="display:flex;align-items:center;gap:8px;"><span class="axnum">馬番 ${uma}</span>${p?`<span class="bdg ${pg==='A'?'pop-a':pg==='B'?'pop-b':'pop-c'}">${pg}群(${p}人気)</span>`:''}<span class="bdg ${idx===0?'bgold':'binf'}">${idx===0?'◎軸':'○対抗'}</span></div><div class="axsub">${info.reasons.join('<br>')}<br><span style="color:var(--go)">スコア:${Math.round(info.score*10)/10}</span></div></div>`;
+      const frameInfo=frameMap[uma]?`<span class="bdg binf">${frameMap[uma]}枠</span>`:'';
+      html+=`<div class="axcard"><div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;"><span class="axnum">馬番 ${uma}</span>${frameInfo}${p?`<span class="bdg ${pg==='A'?'pop-a':pg==='B'?'pop-b':'pop-c'}">${pg}群(${p}人気)</span>`:''}<span class="bdg ${idx===0?'bgold':'binf'}">${idx===0?'◎軸':'○対抗'}</span></div><div class="axsub">${info.reasons.join('<br>')}<br><span style="color:var(--go)">スコア:${Math.round(info.score*10)/10}</span></div></div>`;
     });
     html+=`</div>`;
     if(pop.consecutive)html+=`<div class="msg mgold">${pop.consecutive}</div>`;
@@ -688,7 +744,15 @@ function showPrediction(day,targetR,popMap={}){
     if(topFrame&&final.length>0){
       fHtml+=`<div class="msg mgold" style="margin-top:6px;">◎ ${topFrame.frame}枠 × B群軸馬 → `;
       const frameMatch=final.filter(([u])=>{for(let r=1;r<=targetR-1;r++){const d=getRace(day,r);if(!d)continue;const idx=d.uma.indexOf(Number(u));if(idx>=0&&d.frames[idx]===topFrame.frame)return true;}return false;});
-      fHtml+=frameMatch.length>0?`馬番${frameMatch.map(([u])=>u).join('・')}が注目枠と一致！最優先軸`:`${topFrame.frame}枠の中からB群馬番を探してください`;
+      // 入力された枠番マップからその枠の馬番を特定
+      const inputFrameUmas=Object.entries(frameMap).filter(([u,f])=>f===topFrame.frame).map(([u])=>Number(u));
+      if(frameMatch.length>0){
+        fHtml+=`馬番${frameMatch.map(([u])=>u).join('・')}が注目枠と一致！最優先軸`;
+      } else if(inputFrameUmas.length>0){
+        fHtml+=`${topFrame.frame}枠の馬番：${inputFrameUmas.join('・')} → この中から軸を選んでください`;
+      } else {
+        fHtml+=`${topFrame.frame}枠の中からB群馬番を探してください`;
+      }
       fHtml+=`</div>`;
     }
     fHtml+='</div>';
@@ -772,8 +836,14 @@ function skip10R(){
 function predict11R(){
   if(!rtDayData){showStatus('status1to10','先にデータを読み込んでください','warn');return;}
   const popMap={};
-  for(let i=1;i<=18;i++){const v=document.getElementById('pop11grid-'+i);if(v&&v.value)popMap[i]=parseInt(v.value);}
-  showPrediction(rtDayData,11,popMap);
+  const frameMap={}; // 馬番→枠番
+  for(let i=1;i<=18;i++){
+    const v=document.getElementById('pop11grid-'+i);
+    const f=document.getElementById('pop11grid-frame-'+i);
+    if(v&&v.value)popMap[i]=parseInt(v.value);
+    if(f&&f.value)frameMap[i]=parseInt(f.value);
+  }
+  showPrediction(rtDayData,11,popMap,frameMap);
   document.getElementById('step3-card').style.display='block';
   setStep(3);
 }
@@ -848,6 +918,8 @@ function renderAnalysis(day,targetR=11){
   chain.signals.forEach(s=>html+=`<div class="frow"><span class="flbl">馬番${s.uma}</span><span class="bdg bok">${s.type}</span><span class="fval" style="margin-left:6px;">${s.rs.join('R・')}R</span></div>`);
   html+=`</div>`;
   html+=`<div class="card"><div class="ctitle">⑤ 鏡面復活ロジック</div>`;
+  html+=`<div class="frow"><span class="flbl">前提①核6↔7R</span><span class="bdg ${mirror.core67?'bok':'bng'}">${mirror.core67?'成立':'不成立'}</span></div>`;
+  html+=`<div class="frow"><span class="flbl">前提②5↔8R</span><span class="bdg ${mirror.fold58?'bok':'bng'}">${mirror.fold58?'成立':'不成立'}</span></div>`;
   html+=`<div class="frow"><span class="flbl">4R↔9R連鎖</span><span class="bdg ${mirror.chain9broken?'bwrn':'bok'}">${mirror.chain9broken?'途絶':'あり'}</span></div>`;
   if(mirror.mirror3in10&&mirror.mirror3in10.length)html+=`<div class="frow hl"><span class="flbl">3R→10R復活</span><span class="bdg bok">✓</span><span class="fval">馬番${mirror.mirror3in10.join('・')}</span></div>`;
   else html+=`<div class="frow"><span class="flbl">3R→10R復活</span><span class="bdg bng">なし</span></div>`;
@@ -866,7 +938,7 @@ function renderAnalysis(day,targetR=11){
   });
   html+=`</div><div class="stitle">次レース（${maxR+1}R）の枠番狙い目</div>`;
   if(!fChain.targets.length)html+=`<p style="font-size:11px;color:var(--tx2);">狙い目なし</p>`;
-  else fChain.targets.slice(0,4).forEach(t=>{html+=`<div class="msg ${t.cnt===2||t.cnt>=5?'mgold':'minf'}">▶ ${t.type}</div>`;});
+  else fChain.targets.slice(0,4).forEach(t=>{html+=`<div class="msg ${t.cnt===5||t.cnt===3?'mgold':t.cnt===2||t.cnt>=5?'mgold':'minf'}">▶ ${t.type}</div>`;});
   html+=`<div class="msg minf" style="margin-top:8px;">優位枠グループ：${fChain.domGrp[0]}組（${fChain.domGrp[0]==='A'?'1-4-7枠':fChain.domGrp[0]==='B'?'2-5-8枠':'3-6枠'}）累計${fChain.domGrp[1]}回</div></div>`;
   document.getElementById('analysisContent').innerHTML=html;
 }
@@ -929,9 +1001,13 @@ function buildStats(){
   if(!allDays.length)return;
   let total=0,fH=0,bH=0,cH=0,mH=0,ukH=0,aH=0,rows='';
   const popPatterns={};
+  // 12R統計
+  let total12=0,r12hitFrom11=0;
+  const pop12Patterns={};
 
   allDays.forEach(day=>{
     const r11=getRace(day,11);if(!r11)return;total++;
+    const r12=getRace(day,12);
     const fold=analyzeFold(day,11);
     const brother=analyzeBrother(day,10);
     const chain=analyzeChain(day,10);
@@ -951,13 +1027,25 @@ function buildStats(){
     const a=r11.uma.slice(0,3).some(u=>aC.includes(u));
     if(f)fH++;if(b)bH++;if(c)cH++;if(m)mH++;if(uk)ukH++;if(a)aH++;
 
-    // 人気パターン集計
+    // 11R→12R連鎖統計
+    if(r12){
+      total12++;
+      const r11in12=r11.uma.some(u=>r12.uma.includes(u));
+      if(r11in12)r12hitFrom11++;
+      if(r12.pop1&&r12.pop2&&r12.pop3){
+        const pat12=`${popGroup(r12.pop1)}-${popGroup(r12.pop2)}-${popGroup(r12.pop3)}`;
+        pop12Patterns[pat12]=(pop12Patterns[pat12]||0)+1;
+      }
+    }
+
+    // 11R人気パターン集計
     if(r11.pop1&&r11.pop2&&r11.pop3){
       const pattern=`${popGroup(r11.pop1)}-${popGroup(r11.pop2)}-${popGroup(r11.pop3)}`;
       popPatterns[pattern]=(popPatterns[pattern]||0)+1;
     }
 
-    rows+=`<tr class="${a?'hit':'miss'}" style="cursor:pointer;" onclick="selectDayByDate('${day.date}')"><td style="color:var(--go);text-decoration:underline;">${day.date}</td><td>${fC.join(',')||'-'}</td><td>${bC.join(',')||'-'}</td><td>${cC.join(',')||'-'}</td><td>${r11.uma.slice(0,3).join('-')}</td><td>${r11.pop1?popGroup(r11.pop1)+'-'+popGroup(r11.pop2)+'-'+popGroup(r11.pop3):'-'}</td><td>${a?'✓':'✗'}</td></tr>`;
+    const r12str=r12?r12.uma.slice(0,3).join('-'):'-';
+    rows+=`<tr class="${a?'hit':'miss'}" style="cursor:pointer;" onclick="selectDayByDate('${day.date}')"><td style="color:var(--go);text-decoration:underline;">${day.date}</td><td>${fC.join(',')||'-'}</td><td>${bC.join(',')||'-'}</td><td>${cC.join(',')||'-'}</td><td>${r11.uma.slice(0,3).join('-')}</td><td>${r11.pop1?popGroup(r11.pop1)+'-'+popGroup(r11.pop2)+'-'+popGroup(r11.pop3):'-'}</td><td>${r12str}</td><td>${a?'✓':'✗'}</td></tr>`;
   });
 
   const pct=n=>total?Math.round(n/total*100)+'%':'-%';
@@ -974,6 +1062,21 @@ function buildStats(){
     patternHtml+=`</div>`;
   }
 
+  // 12R人気パターン
+  const sorted12Patterns=Object.entries(pop12Patterns).sort((a,b)=>b[1]-a[1]);
+  let pattern12Html='';
+  if(sorted12Patterns.length){
+    pattern12Html=`<div class="stitle">12R人気パターン（1着-2着-3着）</div><div style="display:flex;flex-wrap:wrap;gap:5px;margin-bottom:10px;">`;
+    sorted12Patterns.slice(0,8).forEach(([pat,cnt])=>{
+      const pct2=Math.round(cnt/total12*100);
+      pattern12Html+=`<div style="background:var(--bg3);border:1px solid var(--bd2);border-radius:8px;padding:6px 10px;text-align:center;"><div style="font-size:13px;font-weight:700;color:var(--go);">${pat}</div><div style="font-size:10px;color:var(--tx2);">${cnt}回 (${pct2}%)</div></div>`;
+    });
+    pattern12Html+=`</div>`;
+  }
+  // 11R→12R連鎖率
+  const chainRate=total12>0?Math.round(r12hitFrom11/total12*100):0;
+  const chainHtml=total12>0?`<div class="msg ${chainRate>=50?'mgold':'minf'}" style="margin-bottom:8px;">11R馬番が12Rに連鎖：${r12hitFrom11}/${total12}日 (${chainRate}%)${chainRate>=50?' → 有意な連鎖あり':' → 偶然の範囲'}</div>`:'';
+
   document.getElementById('statsContent').innerHTML=`
     <div class="sgrid">
       <div class="sbox"><div class="snum">${pct(aH)}</div><div class="slbl">総合的中率</div></div>
@@ -984,8 +1087,10 @@ function buildStats(){
       <div class="sbox"><div class="snum">${total}</div><div class="slbl">分析日数</div></div>
     </div>
     ${patternHtml}
+    ${chainHtml}
+    ${pattern12Html}
     <div class="stitle">日別詳細（日付をクリックで詳細分析）</div>
-    <div style="overflow-x:auto;"><table><thead><tr><th>日付</th><th>折り畳み</th><th>兄弟</th><th>連鎖</th><th>11R結果</th><th>人気</th><th>判定</th></tr></thead><tbody>${rows}</tbody></table></div>`;
+    <div style="overflow-x:auto;"><table><thead><tr><th>日付</th><th>折り畳み</th><th>兄弟</th><th>連鎖</th><th>11R結果</th><th>人気</th><th>12R結果</th><th>判定</th></tr></thead><tbody>${rows}</tbody></table></div>`;
 }
 
 function selectDayByDate(date){
