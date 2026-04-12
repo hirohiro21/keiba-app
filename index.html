@@ -701,8 +701,7 @@ function getAxisCandidates(day,targetR,popMap={}){
   });
   let sorted=Object.entries(cands).sort((a,b)=>b[1].score-a[1].score);
   if(Object.keys(popMap).length>0){
-    const bCands=sorted.filter(([u])=>{const p=popMap[u];return p&&p>=4&&p<=8;});
-    if(bCands.length>0)sorted=bCands;
+  // B群フィルター削除：ロジックスコア上位2頭をそのまま返す（買い判断は人間が行う）
   }
   return sorted.slice(0,2);
 }
