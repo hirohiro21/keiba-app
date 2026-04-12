@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>ヒロ式ロジック v21</title>
+<title>ヒロ式ロジック v22</title>
 <style>
 :root{
   --bg:#0f0f0f;--bg2:#181818;--bg3:#222;--bg4:#2a2a2a;
@@ -114,7 +114,7 @@ tr.miss td{background:rgba(123,45,45,.15);}
 <body>
 <div class="hdr">
   <div><div class="logo">HIRO LOGIC</div><div class="logo-sub">競馬出目パズル分析システム</div></div>
-  <div class="ver">v21.0</div>
+  <div class="ver">v22.0</div>
 </div>
 <div class="wrap">
   <div class="tabs">
@@ -431,7 +431,26 @@ function analyzeFrameChain(day,maxR){
     Object.entries(fGrp).forEach(([g,v])=>{if(v.includes(Number(f)))grpCnt[g]+=cnt;});
   });
   const domGrp=Object.entries(grpCnt).sort((a,b)=>b[1]-a[1])[0];
-  return{targets,current,history,domGrp,grpCnt};
+
+  // ★エネルギー転移：飽和枠(6回以上)→同グループ他枠が代行
+  const fGrpMap={1:'A',4:'A',7:'A',2:'B',5:'B',8:'B',3:'C',6:'C'};
+  const fGrpMembers={A:[1,4,7],B:[2,5,8],C:[3,6]};
+  const energyTransfer=[];
+  Object.entries(current).forEach(([f,cnt])=>{
+    if(cnt>=6){
+      const grp=fGrpMap[Number(f)];
+      if(grp){
+        const others=fGrpMembers[grp].filter(x=>x!==Number(f));
+        others.forEach(to=>{
+          if(current[to]<cnt){
+            energyTransfer.push({from:Number(f),to,cnt,grp});
+          }
+        });
+      }
+    }
+  });
+
+  return{targets,current,history,domGrp,grpCnt,energyTransfer};
 }
 
 function predictTargetFrame(day,targetR){
@@ -666,15 +685,13 @@ function getAxisCandidates(day,targetR,popMap={}){
   fold.filter(f=>(f.isPred||f.isRef)&&f.common.length).forEach(f=>f.common.forEach(n=>add(n,f.label,f.isPred?3:1.5)));
   brother.forEach(b=>{
     b.chains.forEach(c=>{
-      // ★12R予測時：11Rが含まれる兄弟連鎖は完全スキップ
+      // ★12R予測時：11Rが含まれる兄弟連鎖はスコアを0.5倍に抑える
       const has11R=(c.rA===11||c.rB===11)&&targetR===12;
-      if(has11R)return; // 完全除外
-      const score=c.rB>=7?2.5:1.5;
+      const baseScore=c.rB>=7?2.5:1.5;
+      const score=has11R?baseScore*0.5:baseScore;
       c.common.forEach(u=>add(u,`兄弟連鎖(${b.name} ${c.rA}R↔${c.rB}R)`,score));
     });
-    // ★12R予測時：中列(2-5-8-11R)のrecurringは11Rデータが混入するので除外
-    const skipRecurring=targetR===12&&b.name.includes('中列');
-    if(!skipRecurring)b.recurring.filter(x=>x.count>=2).forEach(x=>add(x.uma,`兄弟${x.count}回出現(${b.name})`,1));
+    b.recurring.filter(x=>x.count>=2).forEach(x=>add(x.uma,`兄弟${x.count}回出現(${b.name})`,1));
   });
   chain.signals.forEach(s=>add(s.uma,`馬番連鎖(${s.type})`,1.5));
   if(mirror.active&&targetR===11)mirror.mirror2pred.forEach(u=>add(u,'鏡面復活(2R→11R)',2));
@@ -734,6 +751,33 @@ function showPrediction(day,targetR,popMap={},frameMap={}){
     if(!targetFrames.find(f=>f.frame===t.frame))targetFrames.unshift({frame:t.frame,score:3,reasons:[t.type]});
     else{const e=targetFrames.find(f=>f.frame===t.frame);e.score+=2;e.reasons.unshift(t.type);}
   });
+
+  // ★エネルギー転移をスコアに反映
+  fChainPred.energyTransfer.forEach(et=>{
+    const existing=targetFrames.find(f=>f.frame===et.to);
+    if(existing){existing.score+=2;existing.reasons.unshift(`${et.from}枠飽和→${et.to}枠エネルギー代行`);}
+    else targetFrames.push({frame:et.to,score:2,reasons:[`${et.from}枠飽和→${et.to}枠エネルギー代行`]});
+  });
+
+  // ★始点回帰：1Rの馬番が12Rで戻る（12R予測時のみ）
+  let shittenKaigiHtml='';
+  if(targetR===12){
+    const r1=getRace(day,1);
+    const fold=analyzeFold(day,12);
+    const fold1r12=fold.find(f=>f.a===1&&f.b===12);
+    if(r1&&fold1r12&&fold1r12.common.length>0){
+      const bgunKaigi=fold1r12.common.filter(u=>{
+        const p=Object.entries(popMap||{}).find(([um])=>Number(um)===u);
+        return p&&parseInt(p[1])>=4&&parseInt(p[1])<=8;
+      });
+      if(bgunKaigi.length>0){
+        shittenKaigiHtml=`<div class="msg mgold" style="margin-top:6px;">★始点回帰★ 1Rの馬番${fold1r12.common.join('・')}が12Rで復活！B群：馬番${bgunKaigi.join('・')} → 自信度8〜9</div>`;
+      } else {
+        shittenKaigiHtml=`<div class="msg minf" style="margin-top:6px;">始点回帰：1Rの馬番${fold1r12.common.join('・')}が12Rで復活（B群確認要）</div>`;
+      }
+    }
+  }
+
   targetFrames.sort((a,b)=>b.score-a.score);
   if(targetFrames.length>0){
     let fHtml='<div style="margin-top:10px;"><div class="stitle">注目枠（枠番→馬番絞り込みに活用）</div>';
@@ -755,7 +799,16 @@ function showPrediction(day,targetR,popMap={},frameMap={}){
       }
       fHtml+=`</div>`;
     }
+    // エネルギー転移の表示
+    if(fChainPred.energyTransfer.length>0){
+      fHtml+=`<div class="stitle">エネルギー転移</div>`;
+      fChainPred.energyTransfer.forEach(et=>{
+        fHtml+=`<div class="msg mwrn">⚡ ${et.from}枠が飽和(${et.cnt}回) → ${et.to}枠がエネルギー代行（${et.grp}組）</div>`;
+      });
+    }
     fHtml+='</div>';
+    // 始点回帰の表示
+    if(shittenKaigiHtml)fHtml+=shittenKaigiHtml;
     document.getElementById('axisResult').innerHTML+=fHtml;
   }
   showTab('predict');
@@ -939,7 +992,13 @@ function renderAnalysis(day,targetR=11){
   html+=`</div><div class="stitle">次レース（${maxR+1}R）の枠番狙い目</div>`;
   if(!fChain.targets.length)html+=`<p style="font-size:11px;color:var(--tx2);">狙い目なし</p>`;
   else fChain.targets.slice(0,4).forEach(t=>{html+=`<div class="msg ${t.cnt===5||t.cnt===3?'mgold':t.cnt===2||t.cnt>=5?'mgold':'minf'}">▶ ${t.type}</div>`;});
-  html+=`<div class="msg minf" style="margin-top:8px;">優位枠グループ：${fChain.domGrp[0]}組（${fChain.domGrp[0]==='A'?'1-4-7枠':fChain.domGrp[0]==='B'?'2-5-8枠':'3-6枠'}）累計${fChain.domGrp[1]}回</div></div>`;
+  html+=`<div class="msg minf" style="margin-top:8px;">優位枠グループ：${fChain.domGrp[0]}組（${fChain.domGrp[0]==='A'?'1-4-7枠':fChain.domGrp[0]==='B'?'2-5-8枠':'3-6枠'}）累計${fChain.domGrp[1]}回</div>`;
+  if(fChain.energyTransfer&&fChain.energyTransfer.length>0){
+    fChain.energyTransfer.forEach(et=>{
+      html+=`<div class="msg mwrn">⚡ ${et.from}枠が飽和(${et.cnt}回) → ${et.to}枠がエネルギー代行（${et.grp}組）</div>`;
+    });
+  }
+  html+=`</div>`;
   document.getElementById('analysisContent').innerHTML=html;
 }
 
