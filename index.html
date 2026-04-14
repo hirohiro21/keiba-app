@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>ヒロ式ロジック v22</title>
+<title>ヒロ式ロジック v23</title>
 <style>
 :root{
   --bg:#0f0f0f;--bg2:#181818;--bg3:#222;--bg4:#2a2a2a;
@@ -114,7 +114,7 @@ tr.miss td{background:rgba(123,45,45,.15);}
 <body>
 <div class="hdr">
   <div><div class="logo">HIRO LOGIC</div><div class="logo-sub">競馬出目パズル分析システム</div></div>
-  <div class="ver">v22.0</div>
+  <div class="ver">v23.0</div>
 </div>
 <div class="wrap">
   <div class="tabs">
@@ -571,23 +571,42 @@ function analyzeUmaKuraChain(day,maxR){
   const umaSeq={},kuraSeq={};
   for(let r=1;r<=maxR;r++){
     const d=getRace(day,r);if(!d)continue;
+    // ★1・2着のみカウント（馬連視点）
     [d.uma[0],d.uma[1]].filter(Boolean).forEach(u=>{if(!umaSeq[u])umaSeq[u]=[];umaSeq[u].push(r);});
     d.kura.forEach(k=>{if(!kuraSeq[k])kuraSeq[k]=[];kuraSeq[k].push(r);});
   }
   const umaAlerts=[],kuraAlerts=[];
   Object.entries(umaSeq).forEach(([uma,rs])=>{
     const s=[...new Set(rs)].sort((a,b)=>a-b);
+    let has3consecutive=false;
     for(let i=0;i<=s.length-3;i++){
-      if(s[i+1]-s[i]===1&&s[i+2]-s[i+1]===1)umaAlerts.push({uma:Number(uma),rs:s,type:'3連続'});
+      if(s[i+1]-s[i]===1&&s[i+2]-s[i+1]===1){
+        umaAlerts.push({uma:Number(uma),rs:s,type:'3連続'});
+        has3consecutive=true;
+      }
     }
-    if(s.length>=2){const last=s[s.length-1];if(last>=7&&s[s.length-2]===last-1)umaAlerts.push({uma:Number(uma),rs:s,type:'2連続→次注目'});}
+    // ★3連続が既にある場合は2連続→次注目を出さない
+    if(!has3consecutive&&s.length>=2){
+      const last=s[s.length-1];
+      if(last>=7&&s[s.length-2]===last-1)
+        umaAlerts.push({uma:Number(uma),rs:s,type:'2連続→次注目'});
+    }
   });
   Object.entries(kuraSeq).forEach(([kura,rs])=>{
     const s=[...new Set(rs)].sort((a,b)=>a-b);
+    let has3consecutive=false;
     for(let i=0;i<=s.length-3;i++){
-      if(s[i+1]-s[i]===1&&s[i+2]-s[i+1]===1)kuraAlerts.push({kura:Number(kura),rs:s,type:'3連続'});
+      if(s[i+1]-s[i]===1&&s[i+2]-s[i+1]===1){
+        kuraAlerts.push({kura:Number(kura),rs:s,type:'3連続'});
+        has3consecutive=true;
+      }
     }
-    if(s.length>=2){const last=s[s.length-1];if(last>=7&&s[s.length-2]===last-1)kuraAlerts.push({kura:Number(kura),rs:s,type:'2連続→次注目'});}
+    // ★3連続が既にある場合は2連続→次注目を出さない
+    if(!has3consecutive&&s.length>=2){
+      const last=s[s.length-1];
+      if(last>=7&&s[s.length-2]===last-1)
+        kuraAlerts.push({kura:Number(kura),rs:s,type:'2連続→次注目'});
+    }
   });
   return{umaAlerts,kuraAlerts};
 }
@@ -673,9 +692,12 @@ function getAxisCandidates(day,targetR,popMap={}){
   const maxR=targetR-1;
   const fold=analyzeFold(day,targetR);
   const brother=analyzeBrother(day,maxR);
-  const chain=analyzeChain(day,maxR);
+  // ★12R予測時：馬番連鎖・馬連連続は10Rまで（11Rの影響除外）
+  const chainMaxR=targetR===12?10:maxR;
+  const chain=analyzeChain(day,chainMaxR);
   const mirror=analyzeMirror(day);
-  const ukc=analyzeUmaKuraChain(day,maxR);
+  const ukcMaxR=targetR===12?10:maxR;
+  const ukc=analyzeUmaKuraChain(day,ukcMaxR);
   const cands={};
   const add=(uma,reason,score)=>{
     if(!uma||uma<=0)return;
@@ -691,7 +713,14 @@ function getAxisCandidates(day,targetR,popMap={}){
       const score=has11R?baseScore*0.5:baseScore;
       c.common.forEach(u=>add(u,`兄弟連鎖(${b.name} ${c.rA}R↔${c.rB}R)`,score));
     });
-    b.recurring.filter(x=>x.count>=2).forEach(x=>add(x.uma,`兄弟${x.count}回出現(${b.name})`,1));
+    // ★12R予測時：11Rを除いた兄弟レースのみでrecurringを計算
+    const recurringRaces=targetR===12?b.avail.filter(r=>r!==11):b.avail;
+    const countMap12={};
+    recurringRaces.forEach(r=>{
+      const d=getRace(day,r);if(!d)return;
+      d.uma.forEach(u=>{countMap12[u]=(countMap12[u]||0)+1;});
+    });
+    Object.entries(countMap12).filter(([,c])=>c>=2).forEach(([u,c])=>add(Number(u),`兄弟${c}回出現(${b.name})`,1));
   });
   chain.signals.forEach(s=>add(s.uma,`馬番連鎖(${s.type})`,1.5));
   if(mirror.active&&targetR===11)mirror.mirror2pred.forEach(u=>add(u,'鏡面復活(2R→11R)',2));
@@ -745,6 +774,10 @@ function showPrediction(day,targetR,popMap={},frameMap={}){
     :'<p style="font-size:11px;color:var(--tx2);">収束アラートなし</p>';
   const fChainPred=analyzeFrameChain(day,targetR-1);
   const targetFrames=predictTargetFrame(day,targetR);
+  // ★12R予測時は枠番スコアを1.5倍に増強
+  if(targetR===12){
+    targetFrames.forEach(tf=>{tf.score=Math.round(tf.score*1.5*10)/10;});
+  }
   const chainTarget2=fChainPred.targets.filter(t=>t.cnt===2);
   chainTarget2.forEach(t=>{
     if(!targetFrames.find(f=>f.frame===t.frame))targetFrames.unshift({frame:t.frame,score:3,reasons:[t.type]});
