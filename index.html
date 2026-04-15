@@ -1041,24 +1041,24 @@ function renderMatrix(day){
   for(let r=1;r<=maxR;r++){const d=getRace(day,r);if(!d)continue;d.uma.forEach(u=>{umaCount[u]=(umaCount[u]||0)+1;});}
   let html=`<div class="cmatrix"><div class="crow"><div class="cr-lbl"></div>`;
   for(let r=1;r<=maxR;r++)html+=`<div class="cr-cell" style="font-weight:600;color:var(--go);font-size:10px;">${r}R</div>`;
-  html+=`</div>`;
+  html+=`<div class="cr-cell" style="min-width:28px;font-weight:600;color:var(--go);font-size:10px;">統計</div></div>`;
   activeUmas.forEach(uma=>{
     const cnt=umaCount[uma]||0;
     html+=`<div class="crow"><div class="cr-lbl">${uma}番</div>`;
     for(let r=1;r<=maxR;r++){const d=getRace(day,r);const pos=d?d.uma.indexOf(uma):-1;const cls=pos<0?'':cnt>=3?'h3':cnt===2?'h2':'h1';html+=`<div class="cr-cell ${cls}">${pos>=0?pos+1+'着':''}</div>`;}
-    if(cnt>=2)html+=`<div class="cr-cell" style="min-width:28px;background:rgba(201,168,76,.1);color:var(--go);">${cnt}回</div>`;
+    html+=`<div class="cr-cell" style="min-width:28px;background:rgba(201,168,76,.1);color:var(--go);">${cnt>0?cnt+'回':''}</div>`;
     html+=`</div>`;
   });
   html+=`</div>`;
   document.getElementById('umaMatrix').innerHTML=html;
   let kHtml=`<div class="cmatrix"><div class="crow"><div class="cr-lbl"></div>`;
   for(let r=1;r<=maxR;r++)kHtml+=`<div class="cr-cell" style="font-weight:600;color:var(--go);font-size:10px;">${r}R</div>`;
-  kHtml+=`</div>`;
+  kHtml+=`<div class="cr-cell" style="min-width:28px;font-weight:600;color:var(--go);font-size:10px;">統計</div></div>`;
   for(let k=1;k<=8;k++){
     let cnt=0;for(let r=1;r<=maxR;r++){const d=getRace(day,r);if(d&&d.kura.includes(k))cnt++;}
     kHtml+=`<div class="crow"><div class="cr-lbl">${k}枠</div>`;
     for(let r=1;r<=maxR;r++){const d=getRace(day,r);const has=d&&d.kura.includes(k);const cls=!has?'':cnt>=5?'h3':cnt>=3?'h2':'h1';kHtml+=`<div class="cr-cell ${cls}">${has?'●':''}</div>`;}
-    if(cnt>=3)kHtml+=`<div class="cr-cell" style="min-width:28px;background:rgba(201,168,76,.1);color:var(--go);">${cnt}回</div>`;
+    kHtml+=`<div class="cr-cell" style="min-width:28px;background:rgba(201,168,76,.1);color:var(--go);">${cnt>0?cnt+'回':''}</div>`;
     kHtml+=`</div>`;
   }
   kHtml+=`</div>`;
