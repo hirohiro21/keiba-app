@@ -196,7 +196,9 @@ tr.miss td{background:rgba(123,45,45,.15);}
         <div class="brow">
           <button class="btn btn-g" onclick="exportCSV()">💾 CSVに保存</button>
           <button class="btn" onclick="document.getElementById('csvImport').click()">📂 CSVを読み込む</button>
+          <button class="btn" onclick="document.getElementById('csvImportAdd').click()" style="background:rgba(201,168,76,.15);border:1px solid var(--go);color:var(--go);">📂+ CSV追加（合算）</button>
           <input type="file" id="csvImport" accept=".csv" style="display:none;" onchange="importCSV(this)">
+          <input type="file" id="csvImportAdd" accept=".csv" multiple style="display:none;" onchange="importCSVAdd(this)">
         </div>
         <div style="font-size:10px;color:var(--tx3);margin-top:6px;">保存したCSVはどのPCでも読み込めます</div>
         <div id="csvStatus"></div>
@@ -248,11 +250,19 @@ tr.miss td{background:rgba(123,45,45,.15);}
   </div>
   <div id="tab-stats" class="sec">
     <div class="card"><div class="ctitle">ロジック別的中率</div><div id="statsContent"><p style="font-size:11px;color:var(--tx2);">過去検証モードでデータを蓄積してください</p></div></div>
+    <div class="card" id="allUmaCard" style="display:none;">
+      <div class="ctitle">全期間 馬番出現傾向（複数CSV合算）</div>
+      <div id="allUmaCount"></div>
+    </div>
   </div>
   <div id="tab-frame" class="sec">
     <div class="card"><div class="ctitle">開催日</div><div class="pills" id="framePills"></div></div>
     <div class="card"><div class="ctitle">枠番出現回数</div><div id="frameCount"></div></div>
     <div class="card"><div class="ctitle">兄弟枠連続（後半重視）</div><div id="frameSeq"></div></div>
+    <div class="card" id="allFrameCard" style="display:none;">
+      <div class="ctitle">全期間 枠番出現傾向（複数CSV合算）</div>
+      <div id="allFrameCount"></div>
+    </div>
   </div>
 </div>
 
@@ -1201,7 +1211,7 @@ function loadVerifyData(){
     // ★11Rがなくても6R以上のレースがあれば登録（統計対象外だが日付は保持）
     const raceNums=Object.keys(nd.races).map(Number).filter(r=>getRace(nd,r));
     if(raceNums.length<6)return; // 6R未満はスキップ
-    const idx=allDays.findIndex(d=>d.date===nd.date);
+    const idx=allDays.findIndex(d=>d.date===nd.date&&getRace(d,1)&&getRace(nd,1)&&getRace(d,1).uma[0]===getRace(nd,1).uma[0]);
     if(idx>=0)allDays[idx]=nd;else{allDays.push(nd);added++;}
   });
   allDays.sort((a,b)=>a.date.localeCompare(b.date));
@@ -1211,6 +1221,113 @@ function loadVerifyData(){
   buildStats();
   buildAnalysisPills();
   if(allDays.length)selectAnalysisDay(allDays.length-1);
+}
+
+function importCSVAdd(input){
+  const files = Array.from(input.files);
+  if(!files.length) return;
+  let loaded = 0;
+  files.forEach(file => {
+    const reader = new FileReader();
+    reader.onload = e => {
+      const lines = e.target.result.split('\n').filter(l => l.trim());
+      const dayMap = {};
+      lines.slice(1).forEach(line => {
+        const cols = line.split(','); if(cols.length < 8) return;
+        const date = cols[0].trim(); const rn = parseInt(cols[1]);
+        const u1=parseInt(cols[2]),u2=parseInt(cols[3]),u3=parseInt(cols[4]);
+        const f1=parseInt(cols[5]),f2=parseInt(cols[6]);
+        const pop1=parseInt(cols[8])||0,pop2=parseInt(cols[9])||0,pop3=parseInt(cols[10])||0;
+        if(!date||isNaN(rn)||isNaN(u1)) return;
+        if(!dayMap[date]) dayMap[date]={date,races:{}};
+        const rows=[];
+        if(!isNaN(u1)&&u1>0) rows.push({ord:1,frame:f1||0,num:u1});
+        if(!isNaN(u2)&&u2>0) rows.push({ord:2,frame:f2||0,num:u2});
+        if(!isNaN(u3)&&u3>0) rows.push({ord:3,frame:0,num:u3});
+        const kStr=cols[7]?cols[7].split('-').map(Number).filter(n=>!isNaN(n)&&n>0):[];
+        dayMap[date].races[rn]={n:rn,rows,kura:kStr.length>=2?kStr:[Math.min(f1||0,f2||0),Math.max(f1||0,f2||0)].filter(x=>x>0),pop1,pop2,pop3};
+      });
+      const parsed = Object.values(dayMap).filter(d=>Object.keys(d.races).length>0);
+      parsed.forEach(nd=>{const idx=allDays.findIndex(d=>d.date===nd.date&&getRace(d,1)&&getRace(nd,1)&&getRace(d,1).uma[0]===getRace(nd,1).uma[0]);if(idx>=0)allDays[idx]=nd;else allDays.push(nd);});
+      allDays.sort((a,b)=>a.date.localeCompare(b.date));
+      loaded++;
+      if(loaded === files.length){
+        showStatusEl('csvStatus', allDays.length+'日分のデータを合算しました','ok');
+        buildVerifyPills(); buildStats(); buildAnalysisPills();
+        if(allDays.length) selectAnalysisDay(allDays.length-1);
+        renderAllStats();
+      }
+    };
+    reader.readAsText(file, 'utf-8');
+  });
+  input.value = '';
+}
+
+function renderAllStats(){
+  if(allDays.length < 2) return;
+
+  // 全期間 馬番出現カウント（1〜3着）
+  const umaCnt = {};
+  allDays.forEach(day => {
+    Object.values(day.races).forEach(race => {
+      if(!race || !race.rows) return;
+      race.rows.forEach(row => {
+        if(!row.num || row.num <= 0) return;
+        if(!umaCnt[row.num]) umaCnt[row.num] = {t:0,p1:0,p2:0,p3:0};
+        umaCnt[row.num].t++;
+        if(row.ord===1) umaCnt[row.num].p1++;
+        else if(row.ord===2) umaCnt[row.num].p2++;
+        else if(row.ord===3) umaCnt[row.num].p3++;
+      });
+    });
+  });
+
+  // 全期間 枠番出現カウント
+  const frameCnt = {1:0,2:0,3:0,4:0,5:0,6:0,7:0,8:0};
+  allDays.forEach(day => {
+    Object.values(day.races).forEach(race => {
+      if(!race || !race.kura) return;
+      race.kura.forEach(k => { if(k>=1&&k<=8) frameCnt[k]++; });
+    });
+  });
+
+  // 馬番表示（上位10件）
+  const umaCard = document.getElementById('allUmaCard');
+  const umaEl = document.getElementById('allUmaCount');
+  const totalDays = allDays.length;
+  const sorted = Object.entries(umaCnt).sort((a,b)=>b[1].t-a[1].t).slice(0,10);
+  const maxCnt = sorted[0]?sorted[0][1].t:1;
+  let uHtml = '<div style="font-size:11px;color:var(--tx2);margin-bottom:8px;">'+totalDays+'日分のデータ（全期間合算）</div>';
+  sorted.forEach(([num, c]) => {
+    const pct = Math.round(c.t/maxCnt*100);
+    uHtml += '<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;">';
+    uHtml += '<div style="width:28px;text-align:right;font-size:12px;color:var(--go);font-weight:600;">'+num+'番</div>';
+    uHtml += '<div style="flex:1;background:var(--bg3);border-radius:4px;height:18px;overflow:hidden;">';
+    uHtml += '<div style="width:'+pct+'%;background:rgba(201,168,76,.4);height:100%;border-radius:4px;"></div></div>';
+    uHtml += '<div style="font-size:11px;color:var(--tx2);width:60px;">1着:'+c.p1+' 計:'+c.t+'</div>';
+    uHtml += '</div>';
+  });
+  umaEl.innerHTML = uHtml;
+  umaCard.style.display = 'block';
+
+  // 枠番表示
+  const frameCard = document.getElementById('allFrameCard');
+  const frameEl = document.getElementById('allFrameCount');
+  const fMax = Math.max(...Object.values(frameCnt),1);
+  let fHtml = '<div style="font-size:11px;color:var(--tx2);margin-bottom:8px;">枠連出現回数（全期間）</div>';
+  fHtml += '<div style="display:flex;gap:6px;flex-wrap:wrap;">';
+  Object.entries(frameCnt).forEach(([f,c]) => {
+    const pct = Math.round(c/fMax*100);
+    fHtml += '<div style="text-align:center;min-width:48px;">';
+    fHtml += '<div style="font-size:11px;color:var(--go);font-weight:600;">'+f+'枠</div>';
+    fHtml += '<div style="background:var(--bg3);border-radius:4px;height:60px;display:flex;align-items:flex-end;margin:4px 0;">';
+    fHtml += '<div style="width:100%;background:rgba(201,168,76,.4);height:'+pct+'%;border-radius:4px;min-height:4px;"></div></div>';
+    fHtml += '<div style="font-size:11px;color:var(--tx2);">'+c+'回</div>';
+    fHtml += '</div>';
+  });
+  fHtml += '</div>';
+  frameEl.innerHTML = fHtml;
+  frameCard.style.display = 'block';
 }
 
 function clearAllDays(){allDays=[];buildVerifyPills();document.getElementById('dayCount').textContent=0;document.getElementById('statsContent').innerHTML='<p style="font-size:11px;color:var(--tx2);">データをクリアしました</p>';}
@@ -1297,7 +1414,7 @@ function importCSV(input){
     });
     const parsed=Object.values(dayMap).filter(d=>Object.keys(d.races).length>0);
     if(!parsed.length){showStatus('csvStatus','CSVを読み込めませんでした','warn');return;}
-    parsed.forEach(nd=>{const idx=allDays.findIndex(d=>d.date===nd.date);if(idx>=0)allDays[idx]=nd;else allDays.push(nd);});
+    parsed.forEach(nd=>{const idx=allDays.findIndex(d=>d.date===nd.date&&getRace(d,1)&&getRace(nd,1)&&getRace(d,1).uma[0]===getRace(nd,1).uma[0]);if(idx>=0)allDays[idx]=nd;else allDays.push(nd);});
     allDays.sort((a,b)=>a.date.localeCompare(b.date));
     showStatus('csvStatus',`${parsed.length}日分を読み込みました（累計${allDays.length}日分）`,'ok');
     showStatus('csvStatus2',`${parsed.length}日分を読み込みました（累計${allDays.length}日分）`,'ok');
