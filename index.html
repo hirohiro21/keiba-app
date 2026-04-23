@@ -534,8 +534,11 @@ function analyzeFold(day,targetR){
     const uA=dA?dA.uma:[],uB=dB?dB.uma:[];
     const common=uA.filter(u=>uB.includes(u));
     const isPred=b===targetR;
-    // ★v15：12R予測時、2R↔11RはisRefから除外（11R予測馬番の混入防止）
-    const isRef=targetR===12&&b===11?false:(targetR===12&&b===11);
+    // 11R予測：isRefなし（元のv23動作を維持）
+    // 12R予測：2R↔11Rのみ参照
+    const isRef = isPred ? false : (
+      targetR===12 && b===11 ? true : false
+    );
     return{label:labels[i],a,b,uA,uB,common,isPred,isRef};
   });
 }
@@ -714,13 +717,32 @@ function getAxisCandidates(day,targetR,popMap={}){
     if(!cands[uma])cands[uma]={reasons:[],score:0};
     if(!cands[uma].reasons.includes(reason)){cands[uma].reasons.push(reason);cands[uma].score+=score;}
   };
-  fold.filter(f=>(f.isPred||f.isRef)&&f.common.length).forEach(f=>f.common.forEach(n=>add(n,f.label,f.isPred?3:1.5)));
+  fold.filter(f=>(f.isPred||f.isRef)&&f.common.length).forEach(f=>{
+    // isPred（直接折り畳み）：11R=4点、12R=6点（最優先）
+    // isRef（参照折り畳み）：2点（補助）
+    const baseScore = f.isPred ? (targetR===12?6:4) : 2;
+    f.common.forEach(n=>add(n,f.label,baseScore));
+  });
+  // 1R単独参照：12R予測時に1Rの馬番を最優先で反映（折り畳み候補）
+  if(targetR===12){
+    const r1=getRace(day,1);
+    if(r1){
+      r1.uma.forEach(u=>add(u,'1R折り畳み候補→12R',6));
+    }
+    // 2R↔11R連鎖馬番も12Rに反映
+    const r2=getRace(day,2);
+    const r11=getRace(day,11);
+    if(r2&&r11){
+      const common2_11=r2.uma.filter(u=>r11.uma.includes(u));
+      common2_11.forEach(u=>add(u,'2R↔11R折り畳み→12R',5));
+    }
+  }
   brother.forEach(b=>{
     b.chains.forEach(c=>{
-      // ★12R予測時：11Rが含まれる兄弟連鎖はスコアを0.5倍に抑える
+      // ★12R予測時：兄弟連鎖スコアを抑える（1R折り畳みを優先）
       const has11R=(c.rA===11||c.rB===11)&&targetR===12;
       const baseScore=c.rB>=7?2.5:1.5;
-      const score=has11R?baseScore*0.5:baseScore;
+      const score=has11R?baseScore*0.3:baseScore;
       c.common.forEach(u=>add(u,`兄弟連鎖(${b.name} ${c.rA}R↔${c.rB}R)`,score));
     });
     // ★12R予測時：11Rを除いた兄弟レースのみでrecurringを計算
