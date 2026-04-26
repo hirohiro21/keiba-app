@@ -235,6 +235,10 @@ tr.miss td{background:rgba(123,45,45,.15);}
 
   <div id="tab-analysis" class="sec">
     <div class="card"><div class="ctitle">開催日</div><div class="pills" id="analysisPills"></div></div>
+    <div class="card" style="margin-bottom:10px;">
+      <div class="ctitle">🎯 予測 vs 実績（過去検証）</div>
+      <div id="verifyResultBox"><p style="font-size:11px;color:var(--tx2);">日付を選択してください</p></div>
+    </div>
     <div id="analysisContent"><p style="font-size:11px;color:var(--tx2);">データを読み込んでください</p></div>
   </div>
   <div id="tab-predict" class="sec">
@@ -299,7 +303,27 @@ function parseText(txt){
   const days=[];
   let curDay=null, curRace=null, inResultTable=false;
 
-  const lines=txt.split('\n');
+  // JRA直接コピペ対応：「1\t」「6」「11\tバケラッタ」の3行を1行に結合
+  const rawLines = txt.split('\n');
+  const mergedLines = [];
+  for(let i=0;i<rawLines.length;i++){
+    const cur = rawLines[i].trim();
+    const next = i+1 < rawLines.length ? rawLines[i+1].trim() : '';
+    const next2 = i+2 < rawLines.length ? rawLines[i+2].trim() : '';
+    // パターン：「1\t」or「1」→「6」（枠番単独）→「11\t馬名...」
+    const curOrd = cur.match(/^([123])\t?$/);
+    const nextFrame = next.match(/^([1-8])$/);
+    const next2Num = next2.match(/^(\d{1,2})\t/);
+    if(curOrd && nextFrame && next2Num){
+      const ord = curOrd[1];
+      const frame = nextFrame[1];
+      mergedLines.push(ord+'\t'+frame+'\t'+next2);
+      i+=2;
+      continue;
+    }
+    mergedLines.push(rawLines[i]);
+  }
+  const lines=mergedLines;
 
   for(let i=0;i<lines.length;i++){
     const l=lines[i].trim();
@@ -323,6 +347,10 @@ function parseText(txt){
     if(l.match(/^\[中央競馬.*\]\(http/))continue;
     if(l.match(/^> \d{4}年/))continue;
     if(l.match(/^WIN5[\s\t]+[－\-][\s\t]+[－\-]/))continue;
+    // JRA形式：「着順	枠	馬番	馬名」ヘッダーをスキップ
+    if(l.match(/^着順[\t\s]+枠[\t\s]+馬番/))continue;
+    // JRA形式：レース名行をスキップ（「R	3歳未勝利	結果」等）
+    if(l.match(/^R[\t\s]/))continue;
     if(l.match(/^的中\d+件/))continue;
     if(l.match(/^東京$|^中山$|^阪神$|^京都$|^中京$|^小倉$|^函館$|^札幌$|^新潟$|^福島$/))continue;
 
@@ -361,14 +389,54 @@ function parseText(txt){
       continue;
     }
 
+    // ===== JRA形式：結果行（着順	枠	馬番	馬名	タイム）=====
+    if(!inResultTable&&curRace){
+      const t=l.split('\t');
+      if(t.length>=4){
+        const ord=parseInt(t[0]),frame=parseInt(t[1]),num=parseInt(t[2]);
+        if(!isNaN(ord)&&!isNaN(frame)&&!isNaN(num)&&
+           ord>=1&&ord<=3&&frame>=1&&frame<=8&&num>=1&&num<=18&&
+           curRace.rows.length<3&&!curRace.rows.find(r=>r.ord===ord)){
+          curRace.rows.push({ord,frame,num});
+          continue;
+        }
+      }
+    }
+
     // ===== 払戻セクション =====
     if(!inResultTable&&curRace){
+      // JRA形式枠連：「3-6	260円	1番人気」
+      const kmJRA=l.match(/^(\d+)-(\d+)[\t\s]+[\d,]+円/);
+      if(kmJRA&&!curRace.kura.length&&curRace._inKura){
+        const a=parseInt(kmJRA[1]),b=parseInt(kmJRA[2]);
+        if(a>=1&&a<=8&&b>=1&&b<=8)curRace.kura=[Math.min(a,b),Math.max(a,b)];
+        curRace._inKura=false;
+        continue;
+      }
+      if(l==='枠連'||l.startsWith('枠連\t')){curRace._inKura=true;}
       const km=l.match(/^枠連[\t\s]+(\d+)[－\-](\d+)/);
       if(km&&!curRace.kura.length){
         const a=parseInt(km[1]),b=parseInt(km[2]);
         if(a>=1&&a<=8&&b>=1&&b<=8)curRace.kura=[Math.min(a,b),Math.max(a,b)];
         continue;
       }
+      // JRA形式単勝：「11	670円	3番人気」
+      const tmJRA=l.match(/^(\d+)[\t\s]+[\d,]+円[\t\s]+(\d+)番人気$/);
+      if(tmJRA){
+        const p=parseInt(tmJRA[2]);
+        if(curRace._inTansho&&!curRace.pop1){
+          curRace.pop1=p;
+          curRace._inTansho=false;
+          continue;
+        }
+        // JRA複勝：2着・3着人気
+        if(curRace._inFukusho){
+          if(!curRace.pop2){curRace.pop2=p;continue;}
+          else if(!curRace.pop3){curRace.pop3=p;curRace._inFukusho=false;continue;}
+        }
+      }
+      if(l==='単勝'||l.startsWith('単勝\t')){curRace._inTansho=true;curRace._inFukusho=false;}
+      if(l==='複勝'||l.startsWith('複勝\t')){curRace._inFukusho=true;curRace._inTansho=false;}
       const tm=l.match(/^単勝[\t\s]+\d+[\t\s]+[\d,]+円[\t\s]+(\d+)番人気/);
       if(tm&&!curRace.pop1){curRace.pop1=parseInt(tm[1]);continue;}
       // 複勝から2着・3着人気を抽出（「X番人気」単独行）
@@ -1389,6 +1457,56 @@ function selectAnalysisDay(idx,src=allDays){
     el.querySelectorAll('.pill').forEach((b,i)=>b.classList.toggle('active',i===idx));
   });
   renderAnalysis(day,11);renderMatrix(day);renderFrameTab(day);
+  renderVerifyResult(day);
+}
+
+function renderVerifyResult(day){
+  const el = document.getElementById('verifyResultBox');
+  if(!el) return;
+
+  let html = '';
+
+  // 11R予測と実績
+  const r11 = getRace(day, 11);
+  const final11 = getAxisCandidates(day, 11, {});
+  const pred11_jiku = final11.length >= 1 ? Number(final11[0][0]) : null;
+  const pred11_tai = final11.length >= 2 ? Number(final11[1][0]) : null;
+
+  if(r11){
+    const hit_jiku = pred11_jiku && r11.uma.includes(pred11_jiku);
+    const hit_tai = pred11_tai && r11.uma.includes(pred11_tai);
+    html += `<div style="margin-bottom:12px;">`;
+    html += `<div style="font-size:11px;color:var(--tx2);margin-bottom:6px;">11R 予測 vs 実績</div>`;
+    html += `<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">`;
+    html += `<div style="background:rgba(201,168,76,.15);border:1px solid var(--go);border-radius:8px;padding:6px 12px;font-size:13px;">◎軸 <b style="color:var(--go)">${pred11_jiku||'-'}番</b> ${hit_jiku?'<span style="color:#2d6a4f">✅的中</span>':'<span style="color:#7b2d2d">❌</span>'}</div>`;
+    html += `<div style="background:rgba(88,120,208,.12);border:1px solid #5878d0;border-radius:8px;padding:6px 12px;font-size:13px;">○対抗 <b style="color:#8aabff">${pred11_tai||'-'}番</b> ${hit_tai?'<span style="color:#2d6a4f">✅的中</span>':'<span style="color:#7b2d2d">❌</span>'}</div>`;
+    html += `<div style="font-size:12px;color:var(--tx2);">実際: 馬${r11.uma.join('-')}</div>`;
+    html += `</div></div>`;
+  } else {
+    html += `<div style="font-size:11px;color:var(--tx2);margin-bottom:8px;">11R データなし</div>`;
+  }
+
+  // 12R予測と実績
+  const r12 = getRace(day, 12);
+  const final12 = getAxisCandidates(day, 12, {});
+  const pred12_jiku = final12.length >= 1 ? Number(final12[0][0]) : null;
+  const pred12_tai = final12.length >= 2 ? Number(final12[1][0]) : null;
+
+  if(r12){
+    const hit_jiku = pred12_jiku && r12.uma.includes(pred12_jiku);
+    const hit_tai = pred12_tai && r12.uma.includes(pred12_tai);
+    html += `<div>`;
+    html += `<div style="font-size:11px;color:var(--tx2);margin-bottom:6px;">12R 予測 vs 実績</div>`;
+    html += `<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">`;
+    html += `<div style="background:rgba(201,168,76,.15);border:1px solid var(--go);border-radius:8px;padding:6px 12px;font-size:13px;">◎軸 <b style="color:var(--go)">${pred12_jiku||'-'}番</b> ${hit_jiku?'<span style="color:#2d6a4f">✅的中</span>':'<span style="color:#7b2d2d">❌</span>'}</div>`;
+    html += `<div style="background:rgba(88,120,208,.12);border:1px solid #5878d0;border-radius:8px;padding:6px 12px;font-size:13px;">○対抗 <b style="color:#8aabff">${pred12_tai||'-'}番</b> ${hit_tai?'<span style="color:#2d6a4f">✅的中</span>':'<span style="color:#7b2d2d">❌</span>'}</div>`;
+    html += `<div style="font-size:12px;color:var(--tx2);">実際: 馬${r12.uma.join('-')}</div>`;
+    html += `</div></div>`;
+  } else {
+    html += `<div style="font-size:11px;color:var(--tx2);">12R データなし</div>`;
+  }
+
+  el.innerHTML = html;
 }
 
 function exportCSV(){
