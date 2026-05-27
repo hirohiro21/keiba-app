@@ -98,7 +98,7 @@ tr.miss td{background:rgba(123,45,45,.15);}
 .cmatrix{overflow-x:auto;}
 .crow{display:flex;align-items:center;gap:3px;font-size:11px;margin-bottom:2px;}
 .crow .cr-lbl{width:32px;text-align:right;color:var(--tx2);font-size:10px;flex-shrink:0;}
-.crow .cr-cell{flex:1;min-width:28px;height:22px;border-radius:4px;background:var(--bg3);border:1px solid var(--bd);display:flex;align-items:center;justify-content:center;font-size:10px;color:var(--tx3);}
+.crow .cr-cell{flex:1;min-width:28px;min-height:22px;border-radius:4px;background:var(--bg3);border:1px solid var(--bd);display:flex;flex-direction:column;align-items:center;justify-content:center;font-size:10px;color:var(--tx3);padding:2px 0;}
 .crow .cr-cell.h1{background:rgba(201,168,76,.15);color:var(--go);border-color:rgba(201,168,76,.4);}
 .crow .cr-cell.h2{background:rgba(201,168,76,.35);color:var(--go);border-color:var(--go);font-weight:600;}
 .crow .cr-cell.h3{background:var(--go);color:#000;border-color:var(--go2);font-weight:700;}
@@ -132,6 +132,29 @@ tr.miss td{background:rgba(123,45,45,.15);}
       <div class="mode-row">
         <div class="mode-btn active" id="mode-rt" onclick="setMode('rt')">リアルタイム予測<br><span style="font-size:10px;color:var(--tx3)">1R〜10R → 11R予測</span></div>
         <div class="mode-btn" id="mode-verify" onclick="setMode('verify')">過去検証<br><span style="font-size:10px;color:var(--tx3)">1R〜12R → 統計</span></div>
+      </div>
+    </div>
+    <div class="card" style="margin-top:10px;">
+      <div class="ctitle">🏆 G1モード設定</div>
+      <div style="display:flex;align-items:center;gap:12px;margin-bottom:10px;">
+        <label style="display:flex;align-items:center;gap:6px;cursor:pointer;">
+          <input type="checkbox" id="g1Mode" onchange="toggleG1Mode()" style="width:16px;height:16px;">
+          <span style="font-size:13px;color:var(--tx);">G1モードON（枠連法則を強化）</span>
+        </label>
+      </div>
+      <div id="g1Settings" style="display:none;">
+        <div style="font-size:11px;color:var(--tx2);margin-bottom:6px;">出走頭数を入力（フルゲート判定）</div>
+        <div style="display:flex;align-items:center;gap:8px;">
+          <input type="number" id="g1Horses" value="18" min="8" max="18" style="width:70px;background:var(--bg3);border:1px solid var(--bd2);border-radius:6px;color:var(--tx);padding:6px;font-size:14px;">
+          <span style="font-size:12px;color:var(--tx2);">頭</span>
+          <div style="font-size:11px;color:var(--tx2);">枠連法則ウェイト：</div>
+          <select id="g1Weight" style="background:var(--bg3);border:1px solid var(--bd2);border-radius:6px;color:var(--tx);padding:6px;font-size:12px;">
+            <option value="0.6">60%</option>
+            <option value="0.65" selected>65%</option>
+            <option value="0.7">70%</option>
+          </select>
+        </div>
+        <div style="margin-top:8px;font-size:11px;color:var(--go);">⚡ 同枠決着候補・兄弟枠パターンを強化表示します</div>
       </div>
     </div>
     <div id="rt-flow">
@@ -248,7 +271,7 @@ tr.miss td{background:rgba(123,45,45,.15);}
   </div>
   <div id="tab-matrix" class="sec">
     <div class="card"><div class="ctitle">開催日</div><div class="pills" id="matrixPills"></div></div>
-    <div class="card"><div class="ctitle">馬番出現マトリクス（1〜3着・全レース）</div><div id="umaMatrix"></div></div>
+    <div class="card"><div class="ctitle">馬番出現マトリクス（1・2着・全レース）</div><div id="umaMatrix"></div></div>
     <div class="card"><div class="ctitle">枠番出現マトリクス（枠連・全レース）</div><div id="kuraMatrix"></div></div>
     <div class="card"><div class="ctitle">馬連・枠連の連続出現シグナル</div><div id="chainSignal"></div></div>
   </div>
@@ -868,7 +891,119 @@ function getAxisCandidates(day,targetR,popMap={}){
   if(Object.keys(popMap).length>0){
   // B群フィルター削除：ロジックスコア上位2頭をそのまま返す（買い判断は人間が行う）
   }
+
+  // ===== 後半連鎖チェック（6R〜10R）=====
+  // 前のレースの1・2着馬番が次のレースに出ない状態が続く→馬番スコアを下げる
+  let noChainCount = 0;
+  for(let r=6; r<=Math.min(maxR-1, 9); r++){
+    const cur = getRace(day, r);
+    const nxt = getRace(day, r+1);
+    if(!cur || !nxt) continue;
+    const curTop2 = cur.uma.slice(0,2);
+    const nxtTop2 = nxt.uma.slice(0,2);
+    const hasChain = curTop2.some(u => nxtTop2.includes(u));
+    if(!hasChain) noChainCount++;
+  }
+  // 4回以上連鎖なし→馬番スコアを下げる
+  const chainCheckRaces = Math.min(maxR-1, 9) - 5; // チェック可能レース数
+  if(chainCheckRaces >= 2 && noChainCount >= chainCheckRaces * 0.7){
+    const penalty = 0.7; // 30%ダウン
+    sorted = sorted.map(([u,v])=>[u,{...v,score:Math.round(v.score*penalty*10)/10,reasons:[...v.reasons,'※後半連鎖なし→スコア調整']}]);
+    sorted.sort((a,b)=>b[1].score-a[1].score);
+  }
+
   return sorted.slice(0,2);
+}
+
+function toggleG1Mode(){
+  const cb = document.getElementById('g1Mode');
+  const settings = document.getElementById('g1Settings');
+  settings.style.display = cb.checked ? 'block' : 'none';
+}
+
+function getG1Settings(){
+  const cb = document.getElementById('g1Mode');
+  if(!cb || !cb.checked) return null;
+  return {
+    horses: parseInt(document.getElementById('g1Horses').value)||18,
+    weight: parseFloat(document.getElementById('g1Weight').value)||0.65
+  };
+}
+
+function analyzeG1Frame(day, targetR, horses){
+  // 兄弟枠グループ（フルゲート18頭）
+  const brotherGroups = [[1,4,7,10],[2,5,8,11],[3,6,9,12]];
+  const maxR = targetR - 1;
+  
+  // 枠連出現カウント
+  const framePairCnt = {};
+  const sameFrameCnt = {}; // 同枠決着
+  const frameScore = {1:0,2:0,3:0,4:0,5:0,6:0,7:0,8:0};
+  const frameReasons = {1:[],2:[],3:[],4:[],5:[],6:[],7:[],8:[]};
+  
+  for(let r=1; r<=maxR; r++){
+    const d = getRace(day, r);
+    if(!d || !d.kura || d.kura.length < 2) continue;
+    const [f1, f2] = [Math.min(...d.kura), Math.max(...d.kura)];
+    const key = f1+'-'+f2;
+    framePairCnt[key] = (framePairCnt[key]||0) + 1;
+    if(f1===f2){
+      sameFrameCnt[f1] = (sameFrameCnt[f1]||0) + 1;
+    }
+  }
+  
+  // 兄弟枠スコア計算
+  brotherGroups.forEach(grp => {
+    // グループ内の枠連出現をチェック
+    for(let i=0;i<grp.length;i++){
+      for(let j=i+1;j<grp.length;j++){
+        const f1=Math.min(grp[i],grp[j]), f2=Math.max(grp[i],grp[j]);
+        const cnt = framePairCnt[f1+'-'+f2]||0;
+        if(cnt >= 1){
+          // 兄弟枠が出ているグループの別の枠を注目
+          grp.filter(f=>f!==grp[i]&&f!==grp[j]).forEach(f=>{
+            if(f>=1&&f<=8){
+              frameScore[f] += cnt * 1.5;
+              frameReasons[f].push(`兄弟枠${grp[i]}-${grp[j]}連続→${f}枠注目`);
+            }
+          });
+        }
+      }
+    }
+  });
+  
+  // 同枠決着スコア
+  Object.entries(sameFrameCnt).forEach(([f,cnt])=>{
+    const fn = parseInt(f);
+    if(fn>=1&&fn<=8){
+      frameScore[fn] += cnt * 2;
+      frameReasons[fn].push(`同枠決着${cnt}回→再来候補`);
+    }
+  });
+
+  // 枠連繰り返しスコア
+  Object.entries(framePairCnt).forEach(([key,cnt])=>{
+    if(cnt>=2){
+      const [f1,f2] = key.split('-').map(Number);
+      if(f1>=1&&f1<=8){ frameScore[f1]+=cnt; frameReasons[f1].push(`枠連${key}が${cnt}回出現`); }
+      if(f2>=1&&f2<=8&&f2!==f1){ frameScore[f2]+=cnt; frameReasons[f2].push(`枠連${key}が${cnt}回出現`); }
+    }
+  });
+
+  // 同枠決着候補（フルゲート時）
+  const sameFrameCandidates = [];
+  if(horses >= 16){
+    Object.entries(frameScore).sort((a,b)=>b[1]-a[1]).slice(0,2).forEach(([f])=>{
+      sameFrameCandidates.push(parseInt(f));
+    });
+  }
+
+  const sorted = Object.entries(frameScore).sort((a,b)=>b[1]-a[1]);
+  return {
+    topFrames: sorted.slice(0,4).map(([f,s])=>({frame:parseInt(f),score:Math.round(s*10)/10,reasons:frameReasons[f]})),
+    sameFrameCandidates,
+    framePairCnt
+  };
 }
 
 function showPrediction(day,targetR,popMap={},frameMap={}){
@@ -910,6 +1045,16 @@ function showPrediction(day,targetR,popMap={},frameMap={}){
     :'<p style="font-size:11px;color:var(--tx2);">収束アラートなし</p>';
   const fChainPred=analyzeFrameChain(day,targetR-1);
   const targetFrames=predictTargetFrame(day,targetR);
+  
+  // 後半連鎖チェック（後で適用するため先に計算だけ）
+  let noChainCount2=0;
+  for(let r=6;r<=Math.min(targetR-2,9);r++){
+    const cur=getRace(day,r),nxt=getRace(day,r+1);
+    if(!cur||!nxt)continue;
+    if(!cur.uma.slice(0,2).some(u=>nxt.uma.slice(0,2).includes(u)))noChainCount2++;
+  }
+  const chainCheckRaces2=Math.min(targetR-2,9)-5;
+  const noChainMode=chainCheckRaces2>=2&&noChainCount2>=chainCheckRaces2*0.7;
   // ★12R予測時は枠番スコアを1.5倍に増強
   if(targetR===12){
     targetFrames.forEach(tf=>{tf.score=Math.round(tf.score*1.5*10)/10;});
@@ -947,6 +1092,17 @@ function showPrediction(day,targetR,popMap={},frameMap={}){
   }
 
   targetFrames.sort((a,b)=>b.score-a.score);
+  // 後半連鎖なし→上位枠を強化・下位枠を抑制（順位変動を促す）
+  if(noChainMode){
+    const maxFrameScore = targetFrames.length>0 ? targetFrames[0].score : 1;
+    targetFrames.forEach((tf,idx)=>{
+      // 上位2枠は強化、下位枠は据え置き
+      const boost = idx===0 ? 1.6 : idx===1 ? 1.3 : 1.0;
+      tf.score=Math.round(tf.score*boost*10)/10;
+      if(idx<2) tf.reasons.unshift('※後半連鎖なし→枠番優先×'+boost);
+    });
+    targetFrames.sort((a,b)=>b.score-a.score);
+  }
   if(targetFrames.length>0){
     let fHtml='<div style="margin-top:10px;"><div class="stitle">注目枠（枠番→馬番絞り込みに活用）</div>';
     targetFrames.forEach((tf,idx)=>{
@@ -979,6 +1135,38 @@ function showPrediction(day,targetR,popMap={},frameMap={}){
     if(shittenKaigiHtml)fHtml+=shittenKaigiHtml;
     document.getElementById('axisResult').innerHTML+=fHtml;
   }
+  // G1モード表示
+  const g1 = getG1Settings();
+  if(g1){
+    const g1Result = analyzeG1Frame(day, targetR, g1.horses);
+    const w = g1.weight;
+    let g1Html = `<div class="card" style="border:2px solid var(--go);margin-top:12px;">`;
+    g1Html += `<div class="ctitle">🏆 G1枠連法則予測（重み${Math.round(w*100)}%）</div>`;
+    
+    // トップ枠番
+    g1Html += `<div style="margin-bottom:10px;">`;
+    g1Html += `<div style="font-size:11px;color:var(--tx2);margin-bottom:6px;">注目枠（枠連法則）</div>`;
+    g1Html += `<div style="display:flex;gap:8px;flex-wrap:wrap;">`;
+    g1Result.topFrames.forEach((f,i)=>{
+      g1Html += `<div style="background:${i===0?'rgba(201,168,76,.2)':'var(--bg3)'};border:${i===0?'2px solid var(--go)':'1px solid var(--bd2)'};border-radius:8px;padding:8px 14px;text-align:center;">`;
+      g1Html += `<div style="font-size:${i===0?'22':'16'}px;font-weight:700;color:${i===0?'var(--go)':'var(--tx2)'};">${f.frame}枠</div>`;
+      g1Html += `<div style="font-size:10px;color:var(--tx2);">${i===0?'◎':'○'}次点 スコア:${f.score}</div>`;
+      g1Html += `<div style="font-size:9px;color:var(--tx3);max-width:100px;">${f.reasons.slice(0,2).join(' / ')}</div>`;
+      g1Html += `</div>`;
+    });
+    g1Html += `</div></div>`;
+    
+    // 同枠決着候補
+    if(g1Result.sameFrameCandidates.length > 0 && g1.horses >= 16){
+      g1Html += `<div style="background:rgba(201,168,76,.1);border:1px solid rgba(201,168,76,.3);border-radius:8px;padding:10px;font-size:12px;color:var(--go);">`;
+      g1Html += `⚡ 同枠決着候補：${g1Result.sameFrameCandidates.map(f=>f+'枠-'+f+'枠').join(' / ')}`;
+      g1Html += `</div>`;
+    }
+    
+    g1Html += `</div>`;
+    document.getElementById('axisResult').innerHTML += g1Html;
+  }
+
   showTab('predict');
 }
 
@@ -1147,7 +1335,14 @@ function renderAnalysis(day,targetR=11){
   if(mirror.active)html+=`<div class="msg mgold">鏡面復活発動！→ ${targetR}Rで2Rの馬番（${mirror.mirror2pred.join('・')}）に注目</div>`;
   html+=`</div>`;
   html+=`<div class="card"><div class="ctitle">⑥ 人気の席（後半の流れ）</div><div class="rgrid" style="grid-template-columns:repeat(5,1fr);">`;
-  pop.pops.filter(p=>p.r>=6).forEach(p=>html+=`<div class="rbox"><div class="rn">${p.r}R</div><div class="rd">${popBadge(p.group)}</div><div class="rk">${p.pop}人気</div></div>`);
+  pop.pops.filter(p=>p.r>=6).forEach(p=>{
+    const race=getRace(day,p.r);
+    const umaStr=race?race.uma.slice(0,2).map((u,i)=>{
+      const popVal=i===0?p.pop:(i===1?getRace(day,p.r)?.pop2||'':getRace(day,p.r)?.pop3||'');
+      return u+'番';
+    }).join('-'):'';
+    html+=`<div class="rbox"><div class="rn">${p.r}R</div><div class="rd">${popBadge(p.group)}</div><div class="rk">${p.pop}人気</div>${umaStr?`<div style="font-size:9px;color:var(--tx2);margin-top:2px;">${umaStr}</div>`:''}</div>`;
+  });
   html+=`</div>`;
   if(pop.consecutive)html+=`<div class="msg mgold">${pop.consecutive}</div>`;
   html+=`<div class="msg minf">基本軸：B群(4-8人気)。馬連：B-A・B-B優先。C群連続時はB-Cも。</div></div>`;
@@ -1174,18 +1369,34 @@ function renderMatrix(day){
   const maxR=Math.max(...Object.keys(day.races).map(Number).filter(r=>getRace(day,r)));
   const activeUmas=[...new Set(Array.from({length:maxR},(_,i)=>i+1).flatMap(r=>{const d=getRace(day,r);return d?d.uma:[];}))].sort((a,b)=>a-b);
   const umaCount={};
-  for(let r=1;r<=maxR;r++){const d=getRace(day,r);if(!d)continue;d.uma.forEach(u=>{umaCount[u]=(umaCount[u]||0)+1;});}
+  for(let r=1;r<=maxR;r++){const d=getRace(day,r);if(!d)continue;d.uma.slice(0,2).forEach(u=>{umaCount[u]=(umaCount[u]||0)+1;});}
   let html=`<div class="cmatrix"><div class="crow"><div class="cr-lbl"></div>`;
   for(let r=1;r<=maxR;r++)html+=`<div class="cr-cell" style="font-weight:600;color:var(--go);font-size:10px;">${r}R</div>`;
-  html+=`<div class="cr-cell" style="min-width:28px;font-weight:600;color:var(--go);font-size:10px;">統計</div></div>`;
+  html+=`</div>`;
   activeUmas.forEach(uma=>{
     const cnt=umaCount[uma]||0;
     html+=`<div class="crow"><div class="cr-lbl">${uma}番</div>`;
-    for(let r=1;r<=maxR;r++){const d=getRace(day,r);const pos=d?d.uma.indexOf(uma):-1;const cls=pos<0?'':cnt>=3?'h3':cnt===2?'h2':'h1';html+=`<div class="cr-cell ${cls}">${pos>=0?pos+1+'着':''}</div>`;}
-    html+=`<div class="cr-cell" style="min-width:28px;background:rgba(201,168,76,.1);color:var(--go);">${cnt>0?cnt+'回':''}</div>`;
+    // その馬番が何回目の1・2着かをレース順に累計
+    let runningCnt=0;
+    for(let r=1;r<=maxR;r++){
+      const d=getRace(day,r);
+      const pos=d?d.uma.indexOf(uma):-1;
+      const isTop2=pos>=0&&pos<=1;
+      if(isTop2) runningCnt++;
+      const cls=pos<0?'':cnt>=3?'h3':cnt===2?'h2':'h1';
+      html+=`<div class="cr-cell ${cls}">${pos>=0?pos+1+'着':''}</div>`;
+    }
     html+=`</div>`;
   });
   html+=`</div>`;
+  // 統計サマリーを追加
+  let statHtml='<div style="margin-top:8px;"><div style="font-size:10px;color:var(--tx2);margin-bottom:6px;">1・2着 馬番統計</div><div style="display:flex;flex-wrap:wrap;gap:4px;">';
+  Object.entries(umaCount).filter(([,c])=>c>0).sort((a,b)=>b[1]-a[1]).forEach(([u,c])=>{
+    const color=c>=3?'var(--go)':c===2?'#40916c':'var(--tx2)';
+    statHtml+=`<div style="background:var(--bg3);border:1px solid var(--bd2);border-radius:6px;padding:3px 8px;font-size:11px;color:${color};">${u}番 ${c}回</div>`;
+  });
+  statHtml+='</div></div>';
+  html+=statHtml;
   document.getElementById('umaMatrix').innerHTML=html;
   let kHtml=`<div class="cmatrix"><div class="crow"><div class="cr-lbl"></div>`;
   for(let r=1;r<=maxR;r++)kHtml+=`<div class="cr-cell" style="font-weight:600;color:var(--go);font-size:10px;">${r}R</div>`;
