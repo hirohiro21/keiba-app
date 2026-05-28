@@ -198,6 +198,11 @@ tr.miss td{background:rgba(123,45,45,.15);}
           <input type="number" id="r11fav" style="width:60px;" placeholder="例:5" min="1" max="18">
         </div>
         <div class="stitle">各馬の人気順位</div>
+        <div style="margin-bottom:8px;">
+          <div style="font-size:11px;color:var(--tx2);margin-bottom:4px;">オッズ表を貼り付けると自動計算（任意）</div>
+          <textarea id="oddsText" style="width:100%;height:80px;background:var(--bg3);border:1px solid var(--bd2);border-radius:6px;color:var(--tx);font-size:10px;font-family:monospace;padding:6px;resize:vertical;" placeholder="枠番&#9;馬番&#9;馬名&#9;単勝...の形式を貼り付け"></textarea>
+          <button class="btn" onclick="parseOdds()" style="margin-top:4px;padding:6px 14px;font-size:12px;">オッズから人気を計算</button>
+        </div>
         <div class="popgrid" id="pop11grid"></div>
         <div class="brow">
           <button class="btn btn-g" onclick="predict11R()">▶ 11R 軸馬を予測する</button>
@@ -889,7 +894,17 @@ function getAxisCandidates(day,targetR,popMap={}){
   });
   let sorted=Object.entries(cands).sort((a,b)=>b[1].score-a[1].score);
   if(Object.keys(popMap).length>0){
-  // B群フィルター削除：ロジックスコア上位2頭をそのまま返す（買い判断は人間が行う）
+    // A群（1-3番人気）：スコア+1.5
+    // B群（4-8番人気）：スコア+1.0
+    // C群（9番人気以降）：スコア変更なし
+    Object.entries(popMap).forEach(([uma,pop])=>{
+      const u=Number(uma);
+      const p=parseInt(pop);
+      if(!cands[u])return;
+      if(p>=1&&p<=3){cands[u].score+=1.5;cands[u].reasons.push('A群('+p+'番人気)+1.5');}
+      else if(p>=4&&p<=8){cands[u].score+=1.0;cands[u].reasons.push('B群('+p+'番人気)+1.0');}
+    });
+    sorted=Object.entries(cands).sort((a,b)=>b[1].score-a[1].score);
   }
 
   // ===== 後半連鎖チェック（6R〜10R）=====
@@ -913,6 +928,37 @@ function getAxisCandidates(day,targetR,popMap={}){
   }
 
   return sorted.slice(0,2);
+}
+
+function parseOdds(){
+  const txt = document.getElementById('oddsText').value;
+  if(!txt.trim()) return;
+  const lines = txt.split('\n');
+  const popMap = {};
+
+  // 「人気	馬番	」形式（JRAオッズ表・人気順）
+  lines.forEach(line=>{
+    const t = line.split(/\t/);
+    if(t.length >= 2){
+      const pop = parseInt(t[0]);
+      const uma = parseInt(t[1]);
+      if(!isNaN(pop)&&pop>=1&&pop<=18&&!isNaN(uma)&&uma>=1&&uma<=18){
+        popMap[uma] = pop;
+      }
+    }
+  });
+
+  if(Object.keys(popMap).length === 0){
+    alert('読み取れませんでした\nJRAの人気順オッズ表を貼り付けてください');
+    return;
+  }
+
+  let count = 0;
+  Object.entries(popMap).forEach(([uma, pop])=>{
+    const el = document.getElementById('pop11grid-'+uma);
+    if(el){ el.value = pop; count++; }
+  });
+  alert(count+'頭分の人気を設定しました');
 }
 
 function toggleG1Mode(){
