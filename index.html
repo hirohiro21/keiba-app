@@ -933,23 +933,29 @@ function getAxisCandidates(day,targetR,popMap={}){
 function parseOdds(){
   const txt = document.getElementById('oddsText').value;
   if(!txt.trim()) return;
-  const lines = txt.split('\n');
+  const lines = txt.replace(/\r/g,'').split('\n');
   const popMap = {};
 
   // 「人気	馬番	」形式（JRAオッズ表・人気順）
   lines.forEach(line=>{
     const t = line.split(/\t/);
     if(t.length >= 2){
-      const pop = parseInt(t[0]);
-      const uma = parseInt(t[1]);
-      if(!isNaN(pop)&&pop>=1&&pop<=18&&!isNaN(uma)&&uma>=1&&uma<=18){
+      const pop = parseInt(t[0].trim());
+      if(isNaN(pop)||pop<1||pop>18) return;
+      let uma = -1;
+      if(t[1]&&t[1].trim().match(/^枠[1-8]/)){
+        uma = t[2] ? parseInt(t[2].trim()) : -1;
+      } else {
+        uma = parseInt(t[1].trim());
+      }
+      if(!isNaN(uma)&&uma>=1&&uma<=18){
         popMap[uma] = pop;
       }
     }
   });
 
   if(Object.keys(popMap).length === 0){
-    alert('読み取れませんでした\nJRAの人気順オッズ表を貼り付けてください');
+    alert('読み取れませんでした');
     return;
   }
 
@@ -958,7 +964,7 @@ function parseOdds(){
     const el = document.getElementById('pop11grid-'+uma);
     if(el){ el.value = pop; count++; }
   });
-  alert(count+'頭分の人気を設定しました');
+  alert(count+'頭分の人気を設定しました（▶11R軸馬を予測するを押してください）');
 }
 
 function toggleG1Mode(){
