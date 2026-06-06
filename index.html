@@ -925,6 +925,12 @@ function getAxisCandidates(day,targetR,popMap={}){
       }
     });
 
+    // ⑤-2 11Rスライドポイント（1・2・3着馬番を12Rに反映）
+    const r11slide=getRace(day,11);
+    if(r11slide){
+      r11slide.uma.forEach(u=>add(u,'11Rスライド→12R',2));
+    }
+
     // ⑥頭数把握（STEP2の出走頭数から）
     const headsEl=document.getElementById('r11heads');
     const heads=headsEl?parseInt(headsEl.value)||0:0;
@@ -1313,6 +1319,25 @@ function showPrediction(day,targetR,popMap={},frameMap={}){
     
     g1Html += `</div>`;
     document.getElementById('axisResult').innerHTML += g1Html;
+  }
+
+  // ===== 7〜10R 1番人気飽和アラート =====
+  if(targetR===11){
+    let favAllHit=true;
+    let checkCount=0;
+    for(let r=7;r<=10;r++){
+      const d=getRace(day,r);
+      if(!d){favAllHit=false;break;}
+      // 1番人気が3着以内かチェック（pop1が1の馬が3着以内）
+      if(d.pop1!==1){favAllHit=false;break;}
+      checkCount++;
+    }
+    if(favAllHit&&checkCount===4){
+      const alertEl=document.createElement('div');
+      alertEl.style.cssText='background:rgba(255,80,80,.15);border:1px solid rgba(255,80,80,.5);border-radius:8px;padding:12px;margin-top:10px;font-size:12px;';
+      alertEl.innerHTML='<span style="color:#ff6b6b;font-weight:600;">⚠️ 飽和アラート</span><br><span style="color:var(--tx2);">7〜10Rで1番人気が全て3着以内→A群飽和の可能性<br>B群・C群馬番に注目（参考・検証中）</span>';
+      document.getElementById('axisResult').appendChild(alertEl);
+    }
   }
 
   showTab('predict');
