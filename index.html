@@ -1328,8 +1328,9 @@ function showPrediction(day,targetR,popMap={},frameMap={}){
     for(let r=7;r<=10;r++){
       const d=getRace(day,r);
       if(!d){favAllHit=false;break;}
-      // 1番人気が3着以内かチェック（pop1が1の馬が3着以内）
-      if(d.pop1!==1){favAllHit=false;break;}
+      // 1番人気が3着以内かチェック（1・2・3着のいずれかが1番人気）
+      const fav3=(d.pop1===1||d.pop2===1||d.pop3===1);
+      if(!fav3){favAllHit=false;break;}
       checkCount++;
     }
     if(favAllHit&&checkCount===4){
