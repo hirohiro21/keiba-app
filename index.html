@@ -1156,14 +1156,26 @@ function renderAnalysis(day,targetR=11){
   const ukc=analyzeUmaKuraChain(day,maxR);
   const pop=analyzePop(day,maxR);
   let html='';
-  html+=`<div class="card"><div class="ctitle">レース結果（1R〜${maxR}R）</div><div class="rgrid">`;
-  for(let r=1;r<=maxR;r++){
+  // ★v24: 1R〜12R全表示（11R・12Rも含む）
+  const displayMaxR=12;
+  html+=`<div class="card"><div class="ctitle">レース結果（1R〜${displayMaxR}R）</div><div class="rgrid">`;
+  for(let r=1;r<=displayMaxR;r++){
     const d=getRace(day,r);
-    if(!d){html+=`<div class="rbox"><div class="rn">${r}R</div><div class="rd" style="color:var(--tx3)">-</div></div>`;continue;}
+    // 11R・12Rの予測ラベル
+    const isTarget=(r===targetR);
+    const isPrev=(r===targetR-1&&targetR===12&&r===11);
+    const labelExtra=isTarget?`<span style="font-size:9px;color:var(--go);"> ◀予測</span>`:
+                     (r>maxR&&r<targetR)?`<span style="font-size:9px;color:var(--tx3);"> 参照</span>`:'';
+    if(!d){
+      const emptyStyle=r>maxR?'color:var(--tx3);font-size:10px;':'color:var(--tx3)';
+      html+=`<div class="rbox" style="${r>maxR?'opacity:.5;':''}"><div class="rn">${r}R${labelExtra}</div><div class="rd" style="${emptyStyle}">-</div></div>`;
+      continue;
+    }
     const pg=popGroup(d.pop1);const pgc=pg==='A'?'#c1121f':pg==='B'?'#40916c':'#666';
     const pg2=popGroup(d.pop2);const pg3=popGroup(d.pop3);
     const popStr=d.pop1?`<span style="color:${pgc}">${pg}(${d.pop1})</span>${d.pop2?`-<span style="color:${pg2==='A'?'#c1121f':pg2==='B'?'#40916c':'#888'}">${pg2}(${d.pop2})</span>`:''}${d.pop3?`-<span style="color:${pg3==='A'?'#c1121f':pg3==='B'?'#40916c':'#888'}">${pg3}(${d.pop3})</span>`:''}`:'';
-    html+=`<div class="rbox"><div class="rn">${r}R</div><div class="rd">馬${d.uma.join('-')}</div><div class="rk">枠${d.kura.join('-')} ${popStr}</div></div>`;
+    const boxBorder=r===11?'border-color:rgba(88,120,208,.5);':r===12?'border-color:rgba(201,168,76,.5);':'';
+    html+=`<div class="rbox" style="${boxBorder}"><div class="rn">${r}R${labelExtra}</div><div class="rd">馬${d.uma.join('-')}</div><div class="rk">枠${d.kura.join('-')} ${popStr}</div></div>`;
   }
   html+=`</div></div>`;
   html+=`<div class="card"><div class="ctitle">① 折り畳み監視</div>`;
