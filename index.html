@@ -1597,14 +1597,67 @@ function renderVerifyResult(day){
   el.innerHTML=html;
 }
 
+function calcLogicScore(day, targetR){
+  // ロジックスコアを計算して返す（11R・12R専用）
+  const maxR = targetR - 1;
+  const fold = analyzeFold(day, targetR);
+  const brother = analyzeBrother(day, maxR);
+  const pop = analyzePop(day, maxR);
+  const fChain = analyzeFrameChain(day, maxR);
+  const final = getAxisCandidates(day, targetR, {});
+
+  // 核成立
+  const coreOk = fold[0].common.length > 0 ? 1 : 0;
+
+  // 兄弟連鎖数（合計）
+  let brotherChainCount = 0;
+  brother.forEach(b => brotherChainCount += b.chains.length);
+
+  // 後半人気群（6R以降で最も多い群）
+  const backPops = pop.pops.filter(p => p.r >= 6);
+  const grpCnt = {A:0, B:0, C:0};
+  backPops.forEach(p => { if(grpCnt[p.group] !== undefined) grpCnt[p.group]++; });
+  const domGrp = Object.entries(grpCnt).sort((a,b)=>b[1]-a[1])[0][0];
+
+  // 枠収束フラグ（5回→6回★の枠番をカンマ区切りで）
+  const convergenceFrames = Object.entries(fChain.current)
+    .filter(([,cnt]) => cnt === 5)
+    .map(([f]) => f+'枠')
+    .join('|');
+
+  // 軸馬・対抗スコア
+  const jiku = final.length >= 1 ? final[0] : null;
+  const tai  = final.length >= 2 ? final[1] : null;
+  const jikuUma   = jiku ? Number(jiku[0]) : '';
+  const jikuScore = jiku ? Math.round(jiku[1].score * 10) / 10 : '';
+  const taiUma    = tai  ? Number(tai[0])  : '';
+  const taiScore  = tai  ? Math.round(tai[1].score * 10) / 10  : '';
+
+  // 的中フラグ（◎軸が1〜3着に入ったか）
+  const result = getRace(day, targetR);
+  let hitFlag = '';
+  if(result && jikuUma){
+    hitFlag = result.uma.includes(jikuUma) ? 1 : 0;
+  }
+
+  return {coreOk, brotherChainCount, domGrp, convergenceFrames, jikuUma, jikuScore, taiUma, taiScore, hitFlag};
+}
+
 function exportCSV(){
   const targetDays=allDays.length?allDays:[rtDayData].filter(Boolean);
   if(!targetDays.length){showStatus('csvStatus','保存するデータがありません','warn');return;}
-  let csv='日付,レース,馬番1着,馬番2着,馬番3着,枠1,枠2,枠連,1着人気,2着人気,3着人気\n';
+  let csv='日付,レース,馬番1着,馬番2着,馬番3着,枠1,枠2,枠連,1着人気,2着人気,3着人気,核成立,兄弟連鎖数,後半人気群,収束フラグ,◎馬番,◎スコア,○馬番,○スコア,的中\n';
   targetDays.forEach(day=>{
     for(let r=1;r<=12;r++){
       const d=getRace(day,r);if(!d)continue;
-      csv+=`${day.date},${r}R,${d.uma[0]||''},${d.uma[1]||''},${d.uma[2]||''},${d.frames[0]||''},${d.frames[1]||''},${d.kura.join('-')},${d.pop1||''},${d.pop2||''},${d.pop3||''}\n`;
+      let logicCols = ',,,,,,,,,';
+      if(r===11||r===12){
+        try{
+          const ls = calcLogicScore(day, r);
+          logicCols = `${ls.coreOk},${ls.brotherChainCount},${ls.domGrp},${ls.convergenceFrames},${ls.jikuUma},${ls.jikuScore},${ls.taiUma},${ls.taiScore},${ls.hitFlag}`;
+        } catch(e){ logicCols = ',,,,,,,,,'; }
+      }
+      csv+=`${day.date},${r}R,${d.uma[0]||''},${d.uma[1]||''},${d.uma[2]||''},${d.frames[0]||''},${d.frames[1]||''},${d.kura.join('-')},${d.pop1||''},${d.pop2||''},${d.pop3||''},${logicCols}\n`;
     }
   });
   const blob=new Blob([csv],{type:'text/csv;charset=utf-8;'});
