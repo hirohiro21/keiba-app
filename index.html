@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>ヒロ式ロジック v24</title>
+<title>ヒロ式ロジック v25</title>
 <style>
 :root{
   --bg:#0f0f0f;--bg2:#181818;--bg3:#222;--bg4:#2a2a2a;
@@ -128,7 +128,7 @@ tr.miss td{background:rgba(123,45,45,.15);}
 <body>
 <div class="hdr">
   <div><div class="logo">HIRO LOGIC</div><div class="logo-sub">競馬出目パズル分析システム</div></div>
-  <div class="ver">v24.0</div>
+  <div class="ver">v25.0</div>
 </div>
 <div class="wrap">
   <div class="tabs">
@@ -816,6 +816,126 @@ function getAxisCandidates(day,targetR,popMap={}){
     });
     sorted=Object.entries(cands).sort((a,b)=>b[1].score-a[1].score);
   }
+  // ===== v25 機械学習由来の4改善 =====
+
+  // ① 後半6〜10Rの平均人気でスコア補正（重要度22%・最大特徴量）
+  // 平均人気が高い（B群寄り）ほど、B群馬番のスコアを強化
+  {
+    const backPops=[];
+    for(let r=6;r<=Math.min(maxR,10);r++){
+      const d=getRace(day,r);
+      if(d&&d.pop1)backPops.push(d.pop1);
+    }
+    if(backPops.length>=3){
+      const avgPop=backPops.reduce((a,b)=>a+b,0)/backPops.length;
+      // 平均人気4以上（B群寄り）→ B群馬番を強化、A群を抑制
+      if(avgPop>=4){
+        Object.entries(popMap).forEach(([uma,pop])=>{
+          const u=Number(uma);const p=parseInt(pop);
+          if(!cands[u])return;
+          if(p>=4&&p<=8){cands[u].score+=1.5;cands[u].reasons.push(`後半B群優位(平均${Math.round(avgPop*10)/10}人気)→B群補正+1.5`);}
+          else if(p<=3){cands[u].score-=0.5;cands[u].reasons.push(`後半B群優位→A群抑制-0.5`);}
+        });
+      }
+      // 平均人気3以下（A群寄り）→ A群を強化
+      else if(avgPop<=3){
+        Object.entries(popMap).forEach(([uma,pop])=>{
+          const u=Number(uma);const p=parseInt(pop);
+          if(!cands[u])return;
+          if(p<=3){cands[u].score+=1.0;cands[u].reasons.push(`後半A群優位(平均${Math.round(avgPop*10)/10}人気)→A群補正+1.0`);}
+        });
+      }
+      sorted=Object.entries(cands).sort((a,b)=>b[1].score-a[1].score);
+    }
+  }
+
+  // ② 枠番3回収束の強化（重要度12%・5回収束より重要と判明）
+  {
+    const frameCnt={1:0,2:0,3:0,4:0,5:0,6:0,7:0,8:0};
+    for(let r=1;r<=maxR;r++){const d=getRace(day,r);if(!d)continue;d.kura.forEach(k=>{if(frameCnt[k]!==undefined)frameCnt[k]++;});}
+    Object.entries(frameCnt).forEach(([f,cnt])=>{
+      if(cnt===3){
+        // 3回→4回収束★ 該当枠の馬番にボーナス
+        const fNum=parseInt(f);
+        for(let r=1;r<=maxR;r++){
+          const d=getRace(day,r);if(!d)continue;
+          d.uma.forEach((u,i)=>{
+            if(d.frames[i]===fNum&&cands[u]){
+              cands[u].score+=1.2;
+              if(!cands[u].reasons.includes(`枠${fNum}3回収束→4回目★(v25強化)`))
+                cands[u].reasons.push(`枠${fNum}3回収束→4回目★(v25強化)`);
+            }
+          });
+        }
+      }
+    });
+    sorted=Object.entries(cands).sort((a,b)=>b[1].score-a[1].score);
+  }
+
+  // ③ 折り畳み成立数ボーナス（重要度10%）
+  // 4R↔9R・3R↔10R・2R↔11Rの1・2着折り畳み成立数に応じてトップ候補を強化
+  {
+    const foldPairs=[[4,9],[3,10],[2,Math.min(11,maxR)]];
+    let foldHitCount=0;
+    const foldBonus={};
+    foldPairs.forEach(([ra,rb])=>{
+      if(rb>maxR)return;
+      const da=getRace(day,ra),db=getRace(day,rb);
+      if(!da||!db)return;
+      const common=da.uma.slice(0,2).filter(u=>db.uma.slice(0,2).includes(u));
+      if(common.length){
+        foldHitCount++;
+        common.forEach(u=>{foldBonus[u]=(foldBonus[u]||0)+1;});
+      }
+    });
+    // 2ペア以上成立でトップ候補を大幅強化（データで55%と判明）
+    if(foldHitCount>=2){
+      Object.entries(foldBonus).forEach(([u,cnt])=>{
+        if(cands[Number(u)]){
+          const bonus=foldHitCount>=2?2.0:1.0;
+          cands[Number(u)].score+=bonus;
+          cands[Number(u)].reasons.push(`折り畳み${foldHitCount}ペア成立→強化+${bonus}(v25)`);
+        }
+      });
+      sorted=Object.entries(cands).sort((a,b)=>b[1].score-a[1].score);
+    }
+  }
+
+  // ④ 3着折り畳みボーナス（重要度6.6%・ヒロさんの新発見）
+  // 4R↔9R・3R↔10R・2R↔11Rで前半Rの3着馬が後半Rで連対している場合に加点
+  {
+    const thirdFoldPairs=[[4,9],[3,10],[2,Math.min(11,maxR)]];
+    let thirdHitCount=0;
+    thirdFoldPairs.forEach(([ra,rb])=>{
+      if(rb>maxR)return;
+      const da=getRace(day,ra),db=getRace(day,rb);
+      if(!da||!db||!da.uma[2])return;
+      const third=da.uma[2];
+      if(db.uma.slice(0,2).includes(third)){
+        thirdHitCount++;
+        // 後半Rで連対した3着馬をスコアに反映（targetRに近い意味あり）
+        if(cands[third]){
+          cands[third].score+=0.8;
+          cands[third].reasons.push(`${ra}R3着→${rb}R連対(3着折り畳み・v25)`);
+        } else {
+          // 候補にない場合も軽く追加
+          add(third,`${ra}R3着→${rb}R連対(3着折り畳み・v25)`,0.8);
+        }
+      }
+    });
+    if(thirdHitCount>=2){
+      // 2ペア以上成立は昨日の新潟で発見したパターン→さらに強化
+      Object.keys(cands).forEach(u=>{
+        if(cands[u].reasons.some(r=>r.includes('3着折り畳み'))){
+          cands[Number(u)].score+=1.0;
+          cands[Number(u)].reasons.push(`3着折り畳み${thirdHitCount}ペア同時成立→追加強化(v25)`);
+        }
+      });
+    }
+    sorted=Object.entries(cands).sort((a,b)=>b[1].score-a[1].score);
+  }
+
+  // 後半連鎖チェック（v24から継続）
   let noChainCount=0;
   for(let r=6;r<=Math.min(maxR-1,9);r++){
     const cur=getRace(day,r),nxt=getRace(day,r+1);
