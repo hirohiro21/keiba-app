@@ -818,6 +818,47 @@ function getAxisCandidates(day,targetR,popMap={}){
   }
   // ===== v25 機械学習由来の4改善 =====
 
+  // ⑤ 馬番連続出現スコア（データ検証済み：4連続18%・5連続27%）
+  // 同じ馬番がN連続で3着以内に出てきたら、そのN数に応じてスコア加算
+  {
+    // 各馬番の出現レースを記録
+    const umaRaces = {};
+    for(let r=1; r<=maxR; r++){
+      const d=getRace(day,r); if(!d) continue;
+      d.uma.forEach(u=>{
+        if(!u||u<=0) return;
+        if(!umaRaces[u]) umaRaces[u]=[];
+        umaRaces[u].push(r);
+      });
+    }
+    // 連続区間を検出してスコア加算
+    Object.entries(umaRaces).forEach(([u,races])=>{
+      const uma=Number(u);
+      const sorted=[...new Set(races)].sort((a,b)=>a-b);
+      // 連続区間を探す
+      let i=0;
+      while(i<sorted.length){
+        let j=i;
+        while(j+1<sorted.length && sorted[j+1]===sorted[j]+1) j++;
+        const consec=j-i+1; // 連続回数
+        const lastR=sorted[j];
+        // targetRの直前まで連続している場合のみ対象
+        if(lastR===maxR && consec>=2){
+          let bonus=0, reason='';
+          if(consec>=5){bonus=5.0; reason=`馬番${uma}が${consec}連続(27%実証)→最優先`;}
+          else if(consec===4){bonus=3.5; reason=`馬番${uma}が4連続(18%実証)→強シグナル`;}
+          else if(consec===3){bonus=2.0; reason=`馬番${uma}が3連続→次R狙い`;}
+          else if(consec===2){bonus=1.0; reason=`馬番${uma}が2連続→次R注目`;}
+          if(bonus>0){
+            add(uma, reason, bonus);
+          }
+        }
+        i=j+1;
+      }
+    });
+    sorted=Object.entries(cands).sort((a,b)=>b[1].score-a[1].score);
+  }
+
   // ① 後半6〜10Rの平均人気でスコア補正（重要度22%・最大特徴量）
   // 平均人気が高い（B群寄り）ほど、B群馬番のスコアを強化
   {
