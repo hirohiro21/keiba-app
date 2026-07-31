@@ -1758,14 +1758,14 @@ function renderVerifyResult(day){
   el.innerHTML=html;
 }
 
-function calcLogicScore(day, targetR){
+function calcLogicScore(day, targetR, popMap={}){
   // ロジックスコアを計算して返す（11R・12R専用）
   const maxR = targetR - 1;
   const fold = analyzeFold(day, targetR);
   const brother = analyzeBrother(day, maxR);
   const pop = analyzePop(day, maxR);
   const fChain = analyzeFrameChain(day, maxR);
-  const final = getAxisCandidates(day, targetR, {});
+  const final = getAxisCandidates(day, targetR, popMap);
 
   // 核成立
   const coreOk = fold[0].common.length > 0 ? 1 : 0;
@@ -1780,9 +1780,19 @@ function calcLogicScore(day, targetR){
   backPops.forEach(p => { if(grpCnt[p.group] !== undefined) grpCnt[p.group]++; });
   const domGrp = Object.entries(grpCnt).sort((a,b)=>b[1]-a[1])[0][0];
 
-  // 枠収束フラグ（5回→6回★の枠番をカンマ区切りで）
+  // 後半平均人気（機械学習で最重要特徴量・22%）
+  const backAvgPop = backPops.length ?
+    Math.round(backPops.reduce((s,p)=>s+p.pop,0)/backPops.length*10)/10 : '';
+
+  // 枠収束フラグ（5回→6回★の枠番）
   const convergenceFrames = Object.entries(fChain.current)
     .filter(([,cnt]) => cnt === 5)
+    .map(([f]) => f+'枠')
+    .join('|');
+
+  // 3回収束フラグ（機械学習で重要度2位・12%）
+  const conv3Frames = Object.entries(fChain.current)
+    .filter(([,cnt]) => cnt === 3)
     .map(([f]) => f+'枠')
     .join('|');
 
@@ -1794,29 +1804,114 @@ function calcLogicScore(day, targetR){
   const taiUma    = tai  ? Number(tai[0])  : '';
   const taiScore  = tai  ? Math.round(tai[1].score * 10) / 10  : '';
 
-  // 的中フラグ（◎軸が1〜3着に入ったか）
+  // ◎軸の人気群（A/B/C）
+  let jikuGrp = '';
+  if(jikuUma && popMap[jikuUma]){
+    const p = parseInt(popMap[jikuUma]);
+    jikuGrp = p<=3?'A': p<=8?'B':'C';
+  }
+
+  // 出走頭数（人気入力から最大馬番を推定）
+  const headCount = Object.keys(popMap).length || '';
+
+  // ◎軸の枠番が10Rまでに何回出たか（検証で4回出現が的中率43%最高）
+  let jikuFrameCnt = '';
+  if(jikuUma){
+    // 軸馬番の枠を過去レースから特定
+    let jikuFrame = 0;
+    for(let r=1; r<=maxR; r++){
+      const d=getRace(day,r); if(!d) continue;
+      const idx=d.uma.indexOf(Number(jikuUma));
+      if(idx>=0 && d.frames[idx]){ jikuFrame=d.frames[idx]; break; }
+    }
+    if(jikuFrame > 0) jikuFrameCnt = fChain.current[jikuFrame] || 0;
+  }
+
+  // 枠収束一致フラグ（軸の枠が5回→6回収束パターンか）
+  let convMatchFlag = '';
+  if(jikuFrameCnt !== ''){
+    convMatchFlag = jikuFrameCnt===5 ? 1 : (jikuFrameCnt===3 ? 2 : 0);
+    // 1=5回収束★(40%的中) 2=3回収束(37%的中) 0=それ以外
+  }
+
+  // 馬番連続出現カウント（直前のN連続数）
+  let jikuConsecCnt = 0;
+  if(jikuUma){
+    const umaRaces=[];
+    for(let r=1;r<=maxR;r++){
+      const d=getRace(day,r); if(!d) continue;
+      if(d.uma.includes(Number(jikuUma))) umaRaces.push(r);
+    }
+    // maxRで終わる連続区間を探す
+    if(umaRaces.length>=2){
+      let consec=1;
+      for(let i=umaRaces.length-1;i>0;i--){
+        if(umaRaces[i]-umaRaces[i-1]===1) consec++;
+        else break;
+      }
+      if(umaRaces[umaRaces.length-1]===maxR) jikuConsecCnt=consec;
+    }
+  }
+
+  // 折り畳み成立数（重要度10%）
+  let foldHitCount=0;
+  [[4,9],[3,10],[2,Math.min(11,maxR)]].forEach(([ra,rb])=>{
+    if(rb>maxR) return;
+    const da=getRace(day,ra),db=getRace(day,rb);
+    if(!da||!db) return;
+    if(da.uma.slice(0,2).some(u=>db.uma.slice(0,2).includes(u))) foldHitCount++;
+  });
+
+  // 3着折り畳み成立数（新発見）
+  let thirdFoldCount=0;
+  [[4,9],[3,10],[2,Math.min(11,maxR)]].forEach(([ra,rb])=>{
+    if(rb>maxR) return;
+    const da=getRace(day,ra),db=getRace(day,rb);
+    if(!da||!db||!da.uma[2]) return;
+    if(db.uma.slice(0,2).includes(da.uma[2])) thirdFoldCount++;
+  });
+
+  // 的中フラグ（◎軸が1・2着に入ったか）
   const result = getRace(day, targetR);
   let hitFlag = '';
   if(result && jikuUma){
-    hitFlag = result.uma.includes(jikuUma) ? 1 : 0;
+    hitFlag = result.uma.slice(0,2).includes(Number(jikuUma)) ? 1 : 0;
   }
 
-  return {coreOk, brotherChainCount, domGrp, convergenceFrames, jikuUma, jikuScore, taiUma, taiScore, hitFlag};
+  return {
+    coreOk, brotherChainCount, domGrp, backAvgPop,
+    convergenceFrames, conv3Frames,
+    jikuUma, jikuScore, taiUma, taiScore,
+    jikuGrp, headCount,
+    jikuFrameCnt, convMatchFlag, jikuConsecCnt,
+    foldHitCount, thirdFoldCount,
+    hitFlag
+  };
 }
 
 function exportCSV(){
   const targetDays=allDays.length?allDays:[rtDayData].filter(Boolean);
   if(!targetDays.length){showStatus('csvStatus','保存するデータがありません','warn');return;}
-  let csv='日付,レース,馬番1着,馬番2着,馬番3着,枠1,枠2,枠連,1着人気,2着人気,3着人気,核成立,兄弟連鎖数,後半人気群,収束フラグ,◎馬番,◎スコア,○馬番,○スコア,的中\n';
+  let csv='日付,レース,馬番1着,馬番2着,馬番3着,枠1,枠2,枠連,1着人気,2着人気,3着人気,核成立,兄弟連鎖数,後半人気群,後半平均人気,収束5回枠,収束3回枠,◎馬番,◎スコア,○馬番,○スコア,◎人気群,出走頭数,◎枠出現回数,収束一致,◎連続出現,折り畳み数,3着折り畳み,的中\n';
   targetDays.forEach(day=>{
     for(let r=1;r<=12;r++){
       const d=getRace(day,r);if(!d)continue;
-      let logicCols = ',,,,,,,,,';
+      let logicCols=',,,,,,,,,,,,,,,,,';
       if(r===11||r===12){
         try{
-          const ls = calcLogicScore(day, r);
-          logicCols = `${ls.coreOk},${ls.brotherChainCount},${ls.domGrp},${ls.convergenceFrames},${ls.jikuUma},${ls.jikuScore},${ls.taiUma},${ls.taiScore},${ls.hitFlag}`;
-        } catch(e){ logicCols = ',,,,,,,,,'; }
+          // 人気マップを復元（過去ログから）
+          const popMap={};
+          const ls=calcLogicScore(day,r,popMap);
+          logicCols=[
+            ls.coreOk, ls.brotherChainCount, ls.domGrp, ls.backAvgPop,
+            ls.convergenceFrames, ls.conv3Frames,
+            ls.jikuUma, ls.jikuScore, ls.taiUma, ls.taiScore,
+            ls.jikuGrp, ls.headCount,
+            ls.jikuFrameCnt, ls.convMatchFlag, ls.jikuConsecCnt,
+            ls.foldHitCount, ls.thirdFoldCount,
+            ls.hitFlag
+          ].join(',');
+        } catch(e){ logicCols=',,,,,,,,,,,,,,,,,'; }
       }
       csv+=`${day.date},${r}R,${d.uma[0]||''},${d.uma[1]||''},${d.uma[2]||''},${d.frames[0]||''},${d.frames[1]||''},${d.kura.join('-')},${d.pop1||''},${d.pop2||''},${d.pop3||''},${logicCols}\n`;
     }
