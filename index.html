@@ -224,6 +224,13 @@ tr.miss td{background:rgba(123,45,45,.15);}
       </div>
       <div class="card" id="step3-card" style="display:none;">
         <div class="ctitle">STEP 3：11Rの結果を入力 → 12R予測へ</div>
+        <div style="margin-bottom:10px;">
+          <div style="font-size:11px;color:var(--tx2);margin-bottom:4px;">レジまぐ等の11R結果をそのまま貼り付け（自動読み込み）</div>
+          <textarea id="paste11R" style="width:100%;height:100px;background:var(--bg3);border:1px solid var(--bd2);border-radius:6px;color:var(--tx);font-size:10px;font-family:monospace;padding:6px;resize:vertical;" placeholder="11Rの結果テキストをここに貼り付け&#10;（着順・枠・馬番・払戻など）"></textarea>
+          <button class="btn btn-g" onclick="parse11Rresult()" style="margin-top:4px;padding:6px 14px;font-size:12px;">▶ 11R結果を自動読み込み</button>
+          <div id="status11r_parse"></div>
+        </div>
+        <div style="font-size:10px;color:var(--tx3);margin-bottom:8px;">うまく読み取れない場合は手入力↓</div>
         <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
           <div><div style="font-size:10px;color:var(--tx2);margin-bottom:3px;">1着 枠-馬番</div><div style="display:flex;gap:5px;"><input type="number" id="r11f1" style="width:55px;" placeholder="枠" min="1" max="8"><input type="number" id="r11u1" style="width:55px;" placeholder="馬番" min="1" max="18"></div></div>
           <div><div style="font-size:10px;color:var(--tx2);margin-bottom:3px;">2着 枠-馬番</div><div style="display:flex;gap:5px;"><input type="number" id="r11f2" style="width:55px;" placeholder="枠" min="1" max="8"><input type="number" id="r11u2" style="width:55px;" placeholder="馬番" min="1" max="18"></div></div>
@@ -1217,6 +1224,86 @@ function predict11R(){
   }
   showPrediction(rtDayData,11,popMap,frameMap);
   document.getElementById('step3-card').style.display='block';setStep(3);
+}
+
+function parse11Rresult(){
+  const txt = document.getElementById('paste11R').value;
+  if(!txt.trim()){ showStatus('status11r_parse','テキストを貼り付けてください','warn'); return; }
+
+  // v24のparseTextを流用して11R分だけ解析
+  const parsed = parseText(txt);
+  let race11 = null;
+
+  // parseTextの結果から11Rを探す
+  parsed.forEach(day=>{
+    if(day.races[11] && day.races[11].rows.length) race11 = day.races[11];
+  });
+
+  // parseTextで取れない場合は直接テキスト解析
+  if(!race11){
+    // シンプルな解析：タブ区切り「着順 枠 馬番」を探す
+    const lines = txt.replace(/\r/g,'').split('\n');
+    const rows = [];
+    let inResult = false;
+    let inFukusho = false, fukushoCnt = 0;
+    let pop1=0, pop2=0, pop3=0;
+
+    for(let i=0; i<lines.length; i++){
+      const l = lines[i].trim();
+      if(!l) continue;
+      if(l==='レース結果'||l==='結果'){ inResult=true; continue; }
+      if(l==='払戻金'||l.startsWith('結果払戻')){ inResult=false; continue; }
+      if(l==='複勝'||l.startsWith('複勝\t')){ inFukusho=true; fukushoCnt=0; continue; }
+      if(l==='単勝'||l.startsWith('単勝\t')){ inFukusho=false; continue; }
+
+      // 複勝人気
+      if(inFukusho){
+        const m=l.match(/^(\d+)[\t\s]+[\d,]+円[\t\s]+(\d+)番人気$/);
+        if(m){ fukushoCnt++; if(fukushoCnt===1)pop1=parseInt(m[2]); else if(fukushoCnt===2)pop2=parseInt(m[2]); else if(fukushoCnt===3)pop3=parseInt(m[2]); }
+      }
+
+      if(inResult){
+        const t=l.split('\t');
+        if(t.length>=3){
+          const ord=parseInt(t[0]),frame=parseInt(t[1]),num=parseInt(t[2]);
+          if(!isNaN(ord)&&!isNaN(frame)&&!isNaN(num)&&ord>=1&&ord<=3&&frame>=1&&frame<=8&&num>=1&&num<=18){
+            if(!rows.find(r=>r.ord===ord)) rows.push({ord,frame,num});
+          }
+        }
+        // JRA形式（4列：着順 枠 馬番 馬名）
+        if(t.length>=4){
+          const ord=parseInt(t[0]),frame=parseInt(t[1]),num=parseInt(t[2]);
+          const hasName=t[3]&&isNaN(parseInt(t[3].trim()));
+          if(!isNaN(ord)&&!isNaN(frame)&&!isNaN(num)&&ord>=1&&ord<=3&&frame>=1&&frame<=8&&num>=1&&num<=18&&hasName){
+            if(!rows.find(r=>r.ord===ord)) rows.push({ord,frame,num});
+          }
+        }
+      }
+    }
+    if(rows.length>=2){
+      race11={rows,pop1,pop2,pop3,kura:[]};
+    }
+  }
+
+  if(!race11||!race11.rows.length){
+    showStatus('status11r_parse','11Rの着順を読み取れませんでした。手入力をお試しください','warn');
+    return;
+  }
+
+  // 読み取った結果を入力欄に自動セット
+  const sorted=[...race11.rows].sort((a,b)=>a.ord-b.ord);
+  if(sorted[0]){ document.getElementById('r11f1').value=sorted[0].frame||''; document.getElementById('r11u1').value=sorted[0].num||''; }
+  if(sorted[1]){ document.getElementById('r11f2').value=sorted[1].frame||''; document.getElementById('r11u2').value=sorted[1].num||''; }
+  if(sorted[2]){ document.getElementById('r11f3').value=sorted[2].frame||''; document.getElementById('r11u3').value=sorted[2].num||''; }
+
+  // 人気も自動セット
+  const p1=race11.pop1||0, p2=race11.pop2||0, p3=race11.pop3||0;
+  if(p1) document.getElementById('r11pop1').value=p1;
+  if(p2) document.getElementById('r11pop2').value=p2;
+  if(p3) document.getElementById('r11pop3').value=p3;
+
+  const msg=`11R読み込み完了：1着${sorted[0]?sorted[0].frame+'枠'+sorted[0].num+'番':'?'} 2着${sorted[1]?sorted[1].frame+'枠'+sorted[1].num+'番':'?'}${p1?' 人気:'+p1+'-'+(p2||'?')+'-'+(p3||'?'):''}`;
+  showStatus('status11r_parse', msg, 'ok');
 }
 
 function add11Rresult(){
