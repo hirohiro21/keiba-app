@@ -128,7 +128,7 @@ tr.miss td{background:rgba(123,45,45,.15);}
 <body>
 <div class="hdr">
   <div><div class="logo">HIRO LOGIC</div><div class="logo-sub">競馬出目パズル分析システム</div></div>
-  <div class="ver">v25.0</div>
+  <div class="ver">v26.2</div>
 </div>
 <div class="wrap">
   <div class="tabs">
@@ -247,6 +247,26 @@ tr.miss td{background:rgba(123,45,45,.15);}
         </div>
         <div class="brow"><button class="btn btn-g" onclick="add11Rresult()">▶ 12R 軸馬を予測する</button></div>
         <div id="status11r"></div>
+      </div>
+      <div class="card" id="step4-card" style="display:none;">
+        <div class="ctitle">STEP 4：12Rの結果を入力（CSV保存に必要）</div>
+        <div style="margin-bottom:10px;">
+          <div style="font-size:11px;color:var(--tx2);margin-bottom:4px;">レジまぐ等の12R結果をそのまま貼り付け（自動読み込み）</div>
+          <textarea id="paste12R" style="width:100%;height:100px;background:var(--bg3);border:1px solid var(--bd2);border-radius:6px;color:var(--tx);font-size:10px;font-family:monospace;padding:6px;resize:vertical;" placeholder="12Rの結果テキストをここに貼り付け&#10;（着順・枠・馬番・払戻など）"></textarea>
+          <button class="btn btn-g" onclick="parse12Rresult()" style="margin-top:4px;padding:6px 14px;font-size:12px;">▶ 12R結果を自動読み込み</button>
+          <div id="status12r_parse"></div>
+        </div>
+        <div style="font-size:10px;color:var(--tx3);margin-bottom:8px;">うまく読み取れない場合は手入力↓</div>
+        <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
+          <div><div style="font-size:10px;color:var(--tx2);margin-bottom:3px;">1着 枠-馬番</div><div style="display:flex;gap:5px;"><input type="number" id="r12f1" style="width:55px;" placeholder="枠" min="1" max="8"><input type="number" id="r12u1" style="width:55px;" placeholder="馬番" min="1" max="18"></div></div>
+          <div><div style="font-size:10px;color:var(--tx2);margin-bottom:3px;">2着 枠-馬番</div><div style="display:flex;gap:5px;"><input type="number" id="r12f2" style="width:55px;" placeholder="枠" min="1" max="8"><input type="number" id="r12u2" style="width:55px;" placeholder="馬番" min="1" max="18"></div></div>
+          <div><div style="font-size:10px;color:var(--tx2);margin-bottom:3px;">3着 枠-馬番</div><div style="display:flex;gap:5px;"><input type="number" id="r12f3" style="width:55px;" placeholder="枠" min="1" max="8"><input type="number" id="r12u3" style="width:55px;" placeholder="馬番" min="1" max="18"></div></div>
+          <div><div style="font-size:10px;color:var(--tx2);margin-bottom:3px;">1着人気</div><input type="number" id="r12pop1" style="width:60px;" placeholder="例:3" min="1" max="18"></div>
+          <div><div style="font-size:10px;color:var(--tx2);margin-bottom:3px;">2着人気</div><input type="number" id="r12pop2" style="width:60px;" placeholder="例:5" min="1" max="18"></div>
+          <div><div style="font-size:10px;color:var(--tx2);margin-bottom:3px;">3着人気</div><input type="number" id="r12pop3" style="width:60px;" placeholder="例:8" min="1" max="18"></div>
+        </div>
+        <div class="brow"><button class="btn btn-g" onclick="add12Rresult()">▶ 12R結果を登録（これでCSVに残ります）</button></div>
+        <div id="status12r"></div>
       </div>
       <div class="card">
         <div class="ctitle">データ保存・読み込み</div>
@@ -749,12 +769,17 @@ function analyzeMirror(day){
 }
 
 function getAxisCandidates(day,targetR,popMap={}){
+  // v26: データ検証の結果、以下を反映した簡素化ロジック
+  //  - 兄弟連鎖(1-4-7-10R/2-5-8-11R/3-6-9-12R列)を主軸にする
+  //  - 折り畳み(6-7R核・5-8R・2-11R等)・鏡面復活・12R専用拡張ロジックは
+  //    バックテスト(leak-free, 新旧データ両方)で軒並みベースライン以下だったため
+  //    スコアリングから除外(分析タブでは引き続き表示・監視用途として残す)
+  //  - 11Rは馬番連鎖(重み1)を加点、12Rは馬連連続(重み0.5)を加点。
+  //    これは旧データで探索し、新データ(未使用)でも上振れを確認できた組み合わせ。
   const maxR=targetR-1;
-  const fold=analyzeFold(day,targetR);
   const brother=analyzeBrother(day,maxR);
   const chainMaxR=targetR===12?10:maxR;
   const chain=analyzeChain(day,chainMaxR);
-  const mirror=analyzeMirror(day);
   const ukcMaxR=targetR===12?10:maxR;
   const ukc=analyzeUmaKuraChain(day,ukcMaxR);
   const cands={};
@@ -763,39 +788,8 @@ function getAxisCandidates(day,targetR,popMap={}){
     if(!cands[uma])cands[uma]={reasons:[],score:0};
     if(!cands[uma].reasons.includes(reason)){cands[uma].reasons.push(reason);cands[uma].score+=score;}
   };
-  fold.filter(f=>(f.isPred||f.isRef)&&f.common.length).forEach(f=>{
-    const baseScore=f.isPred?(targetR===12?6:4):2;
-    f.common.forEach(n=>add(n,f.label,baseScore));
-  });
-  if(targetR===12){
-    const r1=getRace(day,1);
-    if(r1)r1.uma.forEach(u=>add(u,'1R折り畳み候補→12R',6));
-    const r2=getRace(day,2),r11=getRace(day,11);
-    if(r2&&r11){r2.uma.filter(u=>r11.uma.includes(u)).forEach(u=>add(u,'2R↔11R折り畳み→12R',5));}
-    const fChain12=analyzeFrameChain(day,11);
-    Object.entries(fChain12.current).forEach(([f,cnt])=>{
-      if(cnt===5){
-        const fNum=parseInt(f);
-        for(let r=1;r<=11;r++){const d=getRace(day,r);if(!d)continue;d.uma.forEach((u,i)=>{if(d.frames[i]===fNum)add(u,`枠${fNum}収束★→12R`,3);});}
-      }
-    });
-    const umaIn369={};
-    [3,6,9].forEach(r=>{const d=getRace(day,r);if(!d)return;d.uma.slice(0,2).forEach(u=>{umaIn369[u]=(umaIn369[u]||0)+1;});});
-    Object.entries(umaIn369).filter(([,c])=>c>=2).forEach(([u,c])=>add(Number(u),`3-6-9R兄弟連鎖(${c}回)→12R`,c*1.5));
-    const frameCnt12={1:0,2:0,3:0,4:0,5:0,6:0,7:0,8:0};
-    for(let r=1;r<=11;r++){const d=getRace(day,r);if(!d||!d.kura)continue;d.kura.forEach(f=>{if(f>=1&&f<=8)frameCnt12[f]++;});}
-    Object.entries(frameCnt12).forEach(([f,cnt])=>{
-      const fNum=parseInt(f);
-      if(cnt===3||cnt===5){for(let r=1;r<=11;r++){const d=getRace(day,r);if(!d)continue;d.uma.forEach((u,i)=>{if(d.frames[i]===fNum)add(u,`枠${fNum}奇数→偶数収束→12R`,1.5);});}}
-    });
-    const r11slide=getRace(day,11);
-    if(r11slide){r11slide.uma.forEach(u=>add(u,'11Rスライド→12R',2));}
-    const headsEl=document.getElementById('r11heads');
-    const heads=headsEl?parseInt(headsEl.value)||0:0;
-    if(heads>0&&heads<=8&&Object.keys(popMap).length>0){
-      Object.entries(popMap).forEach(([u,p])=>{if(p<=3)add(Number(u),'少頭数A群補正',1);});
-    }
-  }
+
+  // 兄弟連鎖(主軸)
   brother.forEach(b=>{
     b.chains.forEach(c=>{
       const has11R=(c.rA===11||c.rB===11)&&targetR===12;
@@ -806,15 +800,28 @@ function getAxisCandidates(day,targetR,popMap={}){
     const recurringRaces=targetR===12?b.avail.filter(r=>r!==11):b.avail;
     const countMap12={};
     recurringRaces.forEach(r=>{const d=getRace(day,r);if(!d)return;d.uma.forEach(u=>{countMap12[u]=(countMap12[u]||0)+1;});});
-    Object.entries(countMap12).filter(([,c])=>c>=2).forEach(([u,c])=>add(Number(u),`兄弟${c}回出現(${b.name})`,1));
+    // v26.1: 11Rは出現回数に比例した段階加点(検証で+0.9pt確認済み)。12Rは現状維持(flat+1、未検証のため)。
+    Object.entries(countMap12).filter(([,c])=>c>=2).forEach(([u,c])=>{
+      const bonus = targetR===11 ? 0.5*c : 1;
+      add(Number(u),`兄弟${c}回出現(${b.name})`,bonus);
+    });
   });
-  chain.signals.forEach(s=>add(s.uma,`馬番連鎖(${s.type})`,1.5));
-  if(mirror.active&&targetR===11)mirror.mirror2pred.forEach(u=>add(u,'鏡面復活(2R→11R)',2));
-  ukc.umaAlerts.forEach(a=>{
-    if(a.type==='3連続')add(a.uma,`馬連馬番${a.uma}:3連続`,2);
-    else add(a.uma,`馬連馬番${a.uma}:2連続→次注目`,1);
-  });
+
+  // 11R: 馬番連鎖(重み1)
+  if(targetR===11){
+    chain.signals.forEach(s=>add(s.uma,`馬番連鎖(${s.type})`,1.5));
+  }
+  // 12R: 馬連連続(重み0.5)
+  if(targetR===12){
+    ukc.umaAlerts.forEach(a=>{
+      if(a.type==='3連続')add(a.uma,`馬連馬番${a.uma}:3連続`,1.0);
+      else add(a.uma,`馬連馬番${a.uma}:2連続→次注目`,0.5);
+    });
+  }
+
   let sorted=Object.entries(cands).sort((a,b)=>b[1].score-a[1].score);
+
+  // オッズ人気帯による補正(実測データに基づくものではなく、入力があれば軽く反映)
   if(Object.keys(popMap).length>0){
     Object.entries(popMap).forEach(([uma,pop])=>{
       const u=Number(uma);const p=parseInt(pop);
@@ -824,56 +831,7 @@ function getAxisCandidates(day,targetR,popMap={}){
     });
     sorted=Object.entries(cands).sort((a,b)=>b[1].score-a[1].score);
   }
-  // ===== v25 追加：馬番連続出現（補助シグナル・弱め）=====
-  // データ検証済み（3連続→次R連対18%、4連続→18%、5連続→27%）
-  // ただし元のロジックを上書きしないよう、スコアは控えめに設定
-  {
-    const umaRaces={};
-    for(let r=1;r<=maxR;r++){
-      const d=getRace(day,r);if(!d)continue;
-      d.uma.forEach(u=>{
-        if(!u||u<=0)return;
-        if(!umaRaces[u])umaRaces[u]=[];
-        umaRaces[u].push(r);
-      });
-    }
-    Object.entries(umaRaces).forEach(([u,races])=>{
-      const uma=Number(u);
-      const sorted=[...new Set(races)].sort((a,b)=>a-b);
-      let i=0;
-      while(i<sorted.length){
-        let j=i;
-        while(j+1<sorted.length&&sorted[j+1]===sorted[j]+1)j++;
-        const consec=j-i+1;
-        const lastR=sorted[j];
-        // targetRの直前まで連続している場合のみ
-        if(lastR===maxR&&consec>=2){
-          // ★補助シグナルとして弱めのスコア（元ロジックの1/5程度）
-          let bonus=0,reason='';
-          if(consec>=5){bonus=0.8;reason=`馬番${uma}が${consec}連続→補助シグナル★`;}
-          else if(consec===4){bonus=0.6;reason=`馬番${uma}が4連続→補助シグナル`;}
-          else if(consec===3){bonus=0.4;reason=`馬番${uma}が3連続→補助シグナル`;}
-          else if(consec===2){bonus=0.2;reason=`馬番${uma}が2連続→補助シグナル`;}
-          if(bonus>0) add(uma,reason,bonus);
-        }
-        i=j+1;
-      }
-    });
-    sorted=Object.entries(cands).sort((a,b)=>b[1].score-a[1].score);
-  }
 
-  let noChainCount=0;
-  for(let r=6;r<=Math.min(maxR-1,9);r++){
-    const cur=getRace(day,r),nxt=getRace(day,r+1);
-    if(!cur||!nxt)continue;
-    if(!cur.uma.slice(0,2).some(u=>nxt.uma.slice(0,2).includes(u)))noChainCount++;
-  }
-  const chainCheckRaces=Math.min(maxR-1,9)-5;
-  if(chainCheckRaces>=2&&noChainCount>=chainCheckRaces*0.7){
-    const penalty=0.7;
-    sorted=sorted.map(([u,v])=>[u,{...v,score:Math.round(v.score*penalty*10)/10,reasons:[...v.reasons,'※後半連鎖なし→スコア調整']}]);
-    sorted.sort((a,b)=>b[1].score-a[1].score);
-  }
   return sorted.slice(0,2);
 }
 
@@ -1105,7 +1063,6 @@ function showPrediction(day,targetR,popMap={},frameMap={}){
       document.getElementById('axisResult').appendChild(alertEl);
     }
   }
-  // ===== v25追加：馬番連続出現シグナル表示（スコアに影響しない・参考情報のみ）=====
   {
     const umaRaces={};
     for(let r=1;r<=targetR-1;r++){
@@ -1140,7 +1097,6 @@ function showPrediction(day,targetR,popMap={},frameMap={}){
     });
     signals.sort((a,b)=>b.consec-a.consec);
 
-    // 軸馬との一致チェック
     const jikuUmas=final.map(([u])=>Number(u));
     let consecHtml='';
     if(!signals.length){
@@ -1154,7 +1110,7 @@ function showPrediction(day,targetR,popMap={},frameMap={}){
         </div>`;
       });
       consecHtml+=`<div style="font-size:10px;color:var(--tx3);margin-top:6px;">
-        ※連続出現は軸スコアに影響しません。◎軸と一致した場合は自信UP、不一致の場合は相手候補の参考にしてください。
+        ※連続出現は軸スコアに影響しません(参考表示のみ)。◎軸と一致した場合は自信UP、不一致の場合は相手候補の参考にしてください。
       </div>`;
     }
     document.getElementById('consecResult').innerHTML=consecHtml;
@@ -1222,6 +1178,11 @@ function predict11R(){
     if(v&&v.value)popMap[i]=parseInt(v.value);
     if(f&&f.value)frameMap[i]=parseInt(f.value);
   }
+  // v26.1: 全頭オッズをCSV保存できるよう、レース単位で保持しておく
+  if(Object.keys(popMap).length>0){
+    rtDayData._fullPop = rtDayData._fullPop || {};
+    rtDayData._fullPop[11] = popMap;
+  }
   showPrediction(rtDayData,11,popMap,frameMap);
   document.getElementById('step3-card').style.display='block';setStep(3);
 }
@@ -1230,18 +1191,14 @@ function parse11Rresult(){
   const txt = document.getElementById('paste11R').value;
   if(!txt.trim()){ showStatus('status11r_parse','テキストを貼り付けてください','warn'); return; }
 
-  // v24のparseTextを流用して11R分だけ解析
   const parsed = parseText(txt);
   let race11 = null;
 
-  // parseTextの結果から11Rを探す
   parsed.forEach(day=>{
     if(day.races[11] && day.races[11].rows.length) race11 = day.races[11];
   });
 
-  // parseTextで取れない場合は直接テキスト解析
   if(!race11){
-    // シンプルな解析：タブ区切り「着順 枠 馬番」を探す
     const lines = txt.replace(/\r/g,'').split('\n');
     const rows = [];
     let inResult = false;
@@ -1256,7 +1213,6 @@ function parse11Rresult(){
       if(l==='複勝'||l.startsWith('複勝\t')){ inFukusho=true; fukushoCnt=0; continue; }
       if(l==='単勝'||l.startsWith('単勝\t')){ inFukusho=false; continue; }
 
-      // 複勝人気
       if(inFukusho){
         const m=l.match(/^(\d+)[\t\s]+[\d,]+円[\t\s]+(\d+)番人気$/);
         if(m){ fukushoCnt++; if(fukushoCnt===1)pop1=parseInt(m[2]); else if(fukushoCnt===2)pop2=parseInt(m[2]); else if(fukushoCnt===3)pop3=parseInt(m[2]); }
@@ -1270,7 +1226,6 @@ function parse11Rresult(){
             if(!rows.find(r=>r.ord===ord)) rows.push({ord,frame,num});
           }
         }
-        // JRA形式（4列：着順 枠 馬番 馬名）
         if(t.length>=4){
           const ord=parseInt(t[0]),frame=parseInt(t[1]),num=parseInt(t[2]);
           const hasName=t[3]&&isNaN(parseInt(t[3].trim()));
@@ -1290,13 +1245,11 @@ function parse11Rresult(){
     return;
   }
 
-  // 読み取った結果を入力欄に自動セット
   const sorted=[...race11.rows].sort((a,b)=>a.ord-b.ord);
   if(sorted[0]){ document.getElementById('r11f1').value=sorted[0].frame||''; document.getElementById('r11u1').value=sorted[0].num||''; }
   if(sorted[1]){ document.getElementById('r11f2').value=sorted[1].frame||''; document.getElementById('r11u2').value=sorted[1].num||''; }
   if(sorted[2]){ document.getElementById('r11f3').value=sorted[2].frame||''; document.getElementById('r11u3').value=sorted[2].num||''; }
 
-  // 人気も自動セット
   const p1=race11.pop1||0, p2=race11.pop2||0, p3=race11.pop3||0;
   if(p1) document.getElementById('r11pop1').value=p1;
   if(p2) document.getElementById('r11pop2').value=p2;
@@ -1324,7 +1277,103 @@ function add11Rresult(){
   showStatus('status11r','11R結果を登録しました → 12R予測を表示します','ok');
   const popMap12={};
   for(let i=1;i<=18;i++){const el=document.getElementById('pop12grid-'+i);if(el&&el.value)popMap12[i]=parseInt(el.value);}
+  // v26.1: 12R側の全頭オッズも同様に保持(過去検証等で races[12] が確定した際にCSV出力で使う)
+  if(Object.keys(popMap12).length>0){
+    rtDayData._fullPop = rtDayData._fullPop || {};
+    rtDayData._fullPop[12] = popMap12;
+  }
   showPrediction(rtDayData,12,popMap12);
+  renderAnalysis(rtDayData,12);renderMatrix(rtDayData);buildAnalysisPills();
+  document.getElementById('step4-card').style.display='block';
+}
+
+function parse12Rresult(){
+  const txt = document.getElementById('paste12R').value;
+  if(!txt.trim()){ showStatus('status12r_parse','テキストを貼り付けてください','warn'); return; }
+
+  const parsed = parseText(txt);
+  let race12 = null;
+
+  parsed.forEach(day=>{
+    if(day.races[12] && day.races[12].rows.length) race12 = day.races[12];
+  });
+
+  if(!race12){
+    const lines = txt.replace(/\r/g,'').split('\n');
+    const rows = [];
+    let inResult = false;
+    let inFukusho = false, fukushoCnt = 0;
+    let pop1=0, pop2=0, pop3=0;
+
+    for(let i=0; i<lines.length; i++){
+      const l = lines[i].trim();
+      if(!l) continue;
+      if(l==='レース結果'||l==='結果'){ inResult=true; continue; }
+      if(l==='払戻金'||l.startsWith('結果払戻')){ inResult=false; continue; }
+      if(l==='複勝'||l.startsWith('複勝\t')){ inFukusho=true; fukushoCnt=0; continue; }
+      if(l==='単勝'||l.startsWith('単勝\t')){ inFukusho=false; continue; }
+
+      if(inFukusho){
+        const m=l.match(/^(\d+)[\t\s]+[\d,]+円[\t\s]+(\d+)番人気$/);
+        if(m){ fukushoCnt++; if(fukushoCnt===1)pop1=parseInt(m[2]); else if(fukushoCnt===2)pop2=parseInt(m[2]); else if(fukushoCnt===3)pop3=parseInt(m[2]); }
+      }
+
+      if(inResult){
+        const t=l.split('\t');
+        if(t.length>=3){
+          const ord=parseInt(t[0]),frame=parseInt(t[1]),num=parseInt(t[2]);
+          if(!isNaN(ord)&&!isNaN(frame)&&!isNaN(num)&&ord>=1&&ord<=3&&frame>=1&&frame<=8&&num>=1&&num<=18){
+            if(!rows.find(r=>r.ord===ord)) rows.push({ord,frame,num});
+          }
+        }
+        if(t.length>=4){
+          const ord=parseInt(t[0]),frame=parseInt(t[1]),num=parseInt(t[2]);
+          const hasName=t[3]&&isNaN(parseInt(t[3].trim()));
+          if(!isNaN(ord)&&!isNaN(frame)&&!isNaN(num)&&ord>=1&&ord<=3&&frame>=1&&frame<=8&&num>=1&&num<=18&&hasName){
+            if(!rows.find(r=>r.ord===ord)) rows.push({ord,frame,num});
+          }
+        }
+      }
+    }
+    if(rows.length>=2){
+      race12={rows,pop1,pop2,pop3,kura:[]};
+    }
+  }
+
+  if(!race12||!race12.rows.length){
+    showStatus('status12r_parse','12Rの着順を読み取れませんでした。手入力をお試しください','warn');
+    return;
+  }
+
+  const sorted=[...race12.rows].sort((a,b)=>a.ord-b.ord);
+  if(sorted[0]){ document.getElementById('r12f1').value=sorted[0].frame||''; document.getElementById('r12u1').value=sorted[0].num||''; }
+  if(sorted[1]){ document.getElementById('r12f2').value=sorted[1].frame||''; document.getElementById('r12u2').value=sorted[1].num||''; }
+  if(sorted[2]){ document.getElementById('r12f3').value=sorted[2].frame||''; document.getElementById('r12u3').value=sorted[2].num||''; }
+
+  const p1=race12.pop1||0, p2=race12.pop2||0, p3=race12.pop3||0;
+  if(p1) document.getElementById('r12pop1').value=p1;
+  if(p2) document.getElementById('r12pop2').value=p2;
+  if(p3) document.getElementById('r12pop3').value=p3;
+
+  const msg=`12R読み込み完了：1着${sorted[0]?sorted[0].frame+'枠'+sorted[0].num+'番':'?'} 2着${sorted[1]?sorted[1].frame+'枠'+sorted[1].num+'番':'?'}${p1?' 人気:'+p1+'-'+(p2||'?')+'-'+(p3||'?'):''}`;
+  showStatus('status12r_parse', msg, 'ok');
+}
+
+function add12Rresult(){
+  if(!rtDayData)return;
+  const f1=parseInt(document.getElementById('r12f1').value)||0;
+  const u1=parseInt(document.getElementById('r12u1').value)||0;
+  const f2=parseInt(document.getElementById('r12f2').value)||0;
+  const u2=parseInt(document.getElementById('r12u2').value)||0;
+  const f3=parseInt(document.getElementById('r12f3').value)||0;
+  const u3=parseInt(document.getElementById('r12u3').value)||0;
+  const pop1=parseInt(document.getElementById('r12pop1').value)||0;
+  const pop2=parseInt(document.getElementById('r12pop2').value)||0;
+  const pop3=parseInt(document.getElementById('r12pop3').value)||0;
+  if(!u1||!u2){showStatus('status12r','1着・2着の馬番を入力してください','warn');return;}
+  rtDayData.races[12]={n:12,rows:[{ord:1,frame:f1,num:u1},{ord:2,frame:f2,num:u2},{ord:3,frame:f3,num:u3}].filter(x=>x.num>0),kura:[Math.min(f1||0,f2||0),Math.max(f1||0,f2||0)].filter(x=>x>0),pop1,pop2,pop3};
+  currentDay=rtDayData;
+  showStatus('status12r','12R結果を登録しました。これでCSV保存すると1R〜12R・全頭オッズまで含めて保存されます','ok');
   renderAnalysis(rtDayData,12);renderMatrix(rtDayData);buildAnalysisPills();
 }
 
@@ -1337,12 +1386,10 @@ function renderAnalysis(day,targetR=11){
   const ukc=analyzeUmaKuraChain(day,maxR);
   const pop=analyzePop(day,maxR);
   let html='';
-  // ★v24: 1R〜12R全表示（11R・12Rも含む）
   const displayMaxR=12;
   html+=`<div class="card"><div class="ctitle">レース結果（1R〜${displayMaxR}R）</div><div class="rgrid">`;
   for(let r=1;r<=displayMaxR;r++){
     const d=getRace(day,r);
-    // 11R・12Rの予測ラベル
     const isTarget=(r===targetR);
     const isPrev=(r===targetR-1&&targetR===12&&r===11);
     const labelExtra=isTarget?`<span style="font-size:9px;color:var(--go);"> ◀予測</span>`:
@@ -1359,16 +1406,16 @@ function renderAnalysis(day,targetR=11){
     html+=`<div class="rbox" style="${boxBorder}"><div class="rn">${r}R${labelExtra}</div><div class="rd">馬${d.uma.join('-')}</div><div class="rk">枠${d.kura.join('-')} ${popStr}</div></div>`;
   }
   html+=`</div></div>`;
-  html+=`<div class="card"><div class="ctitle">① 折り畳み監視</div>`;
+  html+=`<div class="card"><div class="ctitle">① 折り畳み監視（監視用・スコアには使用していません）</div>`;
   const coreOk=fold[0].common.length>0;
-  html+=`<div class="msg ${coreOk?'mgold':'mred'}" style="margin-bottom:7px;">${coreOk?'✓ 核（6R↔7R）成立':'✗ 核（6R↔7R）不成立 → 代替ロジックで対応'}</div>`;
+  html+=`<div class="msg ${coreOk?'mgold':'mred'}" style="margin-bottom:7px;">${coreOk?'✓ 核（6R↔7R）成立':'✗ 核（6R↔7R）不成立'}${targetR===12?(coreOk?' → 12R予測はこのまま兄弟連鎖中心で使用':' → 12R予測は特に兄弟連鎖のみを重視(検証済み)'):''}</div>`;
   fold.forEach(f=>{
     const hit=f.common.length>0;const hlClass=(f.isPred||f.isRef)&&hit?'hl':'';
     const predLabel=f.isPred?'（予測対象）':f.isRef?'（参考）':'';
     html+=`<div class="frow ${hlClass}"><span class="flbl">${f.label}<span style="font-size:9px;color:var(--tx3);">${predLabel}</span></span><span class="bdg ${hit?'bok':'bng'}">${hit?'連鎖✓':'なし'}</span><span class="fval">${f.uA.join('-')||'-'} / ${f.uB.join('-')||'-'}${hit?' → 馬番'+f.common.join('・'):''}</span></div>`;
   });
   html+=`</div>`;
-  html+=`<div class="card"><div class="ctitle">② 兄弟レース監視（1〜3着全馬番）</div>`;
+  html+=`<div class="card"><div class="ctitle">② 兄弟レース監視（1〜3着全馬番）★軸馬予測の主要ロジック</div>`;
   brother.forEach(b=>{
     html+=`<div class="stitle">${b.name}</div>`;
     b.avail.forEach((r,i)=>html+=`<div class="frow"><span class="flbl">${r}R</span><span class="fval">馬番 ${b.allUma[i].join(' - ')}　枠連 ${b.allKura[i].join('-')}</span></div>`);
@@ -1378,23 +1425,23 @@ function renderAnalysis(day,targetR=11){
     if(b.kuraChains.length)b.kuraChains.forEach(k=>html+=`<div class="msg minf">▶ 枠連${k.kura.join('-')}が${k.rA}R↔${k.rB}Rで一致</div>`);
   });
   html+=`</div>`;
-  html+=`<div class="card"><div class="ctitle">③ 馬連・枠連の連続出現監視</div>`;
+  html+=`<div class="card"><div class="ctitle">③ 馬連・枠連の連続出現監視${targetR===12?'（12R予測の補助スコアに使用）':'（監視用）'}</div>`;
   if(!ukc.umaAlerts.length&&!ukc.kuraAlerts.length)html+=`<p style="font-size:11px;color:var(--tx2);">特筆すべき連続出現なし</p>`;
   ukc.umaAlerts.forEach(a=>html+=`<div class="msg ${a.type==='3連続'?'mgold':'minf'}">馬連馬番 ${a.uma}：${a.rs.join('R・')}R [${a.type}]</div>`);
   ukc.kuraAlerts.forEach(a=>html+=`<div class="msg ${a.type==='3連続'?'mgold':'minf'}">枠連 ${a.kura}枠：${a.rs.join('R・')}R [${a.type}]</div>`);
   html+=`</div>`;
-  html+=`<div class="card"><div class="ctitle">④ 馬番連鎖法則</div>`;
+  html+=`<div class="card"><div class="ctitle">④ 馬番連鎖法則${targetR===11?'（11R予測の補助スコアに使用）':'（監視用）'}</div>`;
   if(!chain.signals.length&&!chain.warn.length)html+=`<p style="font-size:11px;color:var(--tx2);">特筆すべき連鎖なし</p>`;
   chain.warn.forEach(w=>html+=`<div class="frow"><span class="flbl">馬番${w.uma}</span><span class="bdg bwrn">飽和注意</span><span class="fval" style="margin-left:6px;">${w.rs.join('R→')}R</span></div>`);
   chain.signals.forEach(s=>html+=`<div class="frow"><span class="flbl">馬番${s.uma}</span><span class="bdg bok">${s.type}</span><span class="fval" style="margin-left:6px;">${s.rs.join('R・')}R</span></div>`);
   html+=`</div>`;
-  html+=`<div class="card"><div class="ctitle">⑤ 鏡面復活ロジック</div>`;
+  html+=`<div class="card"><div class="ctitle">⑤ 鏡面復活ロジック（監視用・スコアには使用していません）</div>`;
   html+=`<div class="frow"><span class="flbl">前提①核6↔7R</span><span class="bdg ${mirror.core67?'bok':'bng'}">${mirror.core67?'成立':'不成立'}</span></div>`;
   html+=`<div class="frow"><span class="flbl">前提②5↔8R</span><span class="bdg ${mirror.fold58?'bok':'bng'}">${mirror.fold58?'成立':'不成立'}</span></div>`;
   html+=`<div class="frow"><span class="flbl">4R↔9R連鎖</span><span class="bdg ${mirror.chain9broken?'bwrn':'bok'}">${mirror.chain9broken?'途絶':'あり'}</span></div>`;
   if(mirror.mirror3in10&&mirror.mirror3in10.length)html+=`<div class="frow hl"><span class="flbl">3R→10R復活</span><span class="bdg bok">✓</span><span class="fval">馬番${mirror.mirror3in10.join('・')}</span></div>`;
   else html+=`<div class="frow"><span class="flbl">3R→10R復活</span><span class="bdg bng">なし</span></div>`;
-  if(mirror.active)html+=`<div class="msg mgold">鏡面復活発動！→ ${targetR}Rで2Rの馬番（${mirror.mirror2pred.join('・')}）に注目</div>`;
+  if(mirror.active)html+=`<div class="msg mwrn">鏡面復活の条件は成立していますが、検証の結果この条件下での的中率はランダムと同等以下でした。参考程度に留めてください（2Rの馬番：${mirror.mirror2pred.join('・')}）</div>`;
   html+=`</div>`;
   html+=`<div class="card"><div class="ctitle">⑥ 人気の席（後半の流れ）</div><div class="rgrid" style="grid-template-columns:repeat(5,1fr);">`;
   pop.pops.filter(p=>p.r>=6).forEach(p=>{
@@ -1422,7 +1469,6 @@ function renderAnalysis(day,targetR=11){
   document.getElementById('analysisContent').innerHTML=html;
 }
 
-// ★ v24 修正：renderMatrix - 馬番統計を1〜18固定順・0回表示
 function renderMatrix(day){
   const maxR=Math.max(...Object.keys(day.races).map(Number).filter(r=>getRace(day,r)));
   const umaCount={};
@@ -1430,7 +1476,6 @@ function renderMatrix(day){
     const d=getRace(day,r);if(!d)continue;
     d.uma.slice(0,2).forEach(u=>{umaCount[u]=(umaCount[u]||0)+1;});
   }
-  // アクティブな馬番（マトリクス表示用）
   const activeUmas=[...new Set(Array.from({length:maxR},(_,i)=>i+1).flatMap(r=>{const d=getRace(day,r);return d?d.uma:[];}))].sort((a,b)=>a-b);
 
   let html=`<div class="cmatrix"><div class="crow"><div class="cr-lbl"></div>`;
@@ -1449,7 +1494,6 @@ function renderMatrix(day){
   });
   html+=`</div>`;
 
-  // ★ v24 変更点：馬番統計を1〜18固定順・グリッド表示・0回も表示
   html+=`<div class="stitle" style="margin-top:10px;">1・2着 馬番統計（馬番順）</div>`;
   html+=`<div class="uma-stat-grid">`;
   for(let u=1;u<=18;u++){
@@ -1464,7 +1508,6 @@ function renderMatrix(day){
 
   document.getElementById('umaMatrix').innerHTML=html;
 
-  // 枠番マトリクス
   let kHtml=`<div class="cmatrix"><div class="crow"><div class="cr-lbl"></div>`;
   for(let r=1;r<=maxR;r++)kHtml+=`<div class="cr-cell" style="font-weight:600;color:var(--go);font-size:10px;">${r}R</div>`;
   kHtml+=`<div class="cr-cell" style="min-width:28px;font-weight:600;color:var(--go);font-size:10px;">統計</div></div>`;
@@ -1628,7 +1671,17 @@ function importCSVAdd(input){
         if(!isNaN(u2)&&u2>0)rows.push({ord:2,frame:f2||0,num:u2});
         if(!isNaN(u3)&&u3>0)rows.push({ord:3,frame:0,num:u3});
         const kStr=cols[7]?cols[7].split('-').map(Number).filter(n=>!isNaN(n)&&n>0):[];
-        dayMap[date].races[rn]={n:rn,rows,kura:kStr.length>=2?kStr:[Math.min(f1||0,f2||0),Math.max(f1||0,f2||0)].filter(x=>x>0),pop1,pop2,pop3};
+        const race={n:rn,rows,kura:kStr.length>=2?kStr:[Math.min(f1||0,f2||0),Math.max(f1||0,f2||0)].filter(x=>x>0),pop1,pop2,pop3};
+        const fullPopCol = cols[20] ? cols[20].trim() : '';
+        if(fullPopCol){
+          const fp={};
+          fullPopCol.split('|').forEach(pair=>{
+            const [u,p]=pair.split(':').map(Number);
+            if(!isNaN(u)&&!isNaN(p))fp[u]=p;
+          });
+          if(Object.keys(fp).length)race.fullPop=fp;
+        }
+        dayMap[date].races[rn]=race;
       });
       const parsed=Object.values(dayMap).filter(d=>Object.keys(d.races).length>0);
       parsed.forEach(nd=>{const idx=allDays.findIndex(d=>d.date===nd.date&&getRace(d,1)&&getRace(nd,1)&&getRace(d,1).uma[0]===getRace(nd,1).uma[0]);if(idx>=0)allDays[idx]=nd;else allDays.push(nd);});
@@ -1779,7 +1832,6 @@ function renderVerifyResult(day){
 }
 
 function calcLogicScore(day, targetR){
-  // ロジックスコアを計算して返す（11R・12R専用）
   const maxR = targetR - 1;
   const fold = analyzeFold(day, targetR);
   const brother = analyzeBrother(day, maxR);
@@ -1787,26 +1839,21 @@ function calcLogicScore(day, targetR){
   const fChain = analyzeFrameChain(day, maxR);
   const final = getAxisCandidates(day, targetR, {});
 
-  // 核成立
   const coreOk = fold[0].common.length > 0 ? 1 : 0;
 
-  // 兄弟連鎖数（合計）
   let brotherChainCount = 0;
   brother.forEach(b => brotherChainCount += b.chains.length);
 
-  // 後半人気群（6R以降で最も多い群）
   const backPops = pop.pops.filter(p => p.r >= 6);
   const grpCnt = {A:0, B:0, C:0};
   backPops.forEach(p => { if(grpCnt[p.group] !== undefined) grpCnt[p.group]++; });
   const domGrp = Object.entries(grpCnt).sort((a,b)=>b[1]-a[1])[0][0];
 
-  // 枠収束フラグ（5回→6回★の枠番をカンマ区切りで）
   const convergenceFrames = Object.entries(fChain.current)
     .filter(([,cnt]) => cnt === 5)
     .map(([f]) => f+'枠')
     .join('|');
 
-  // 軸馬・対抗スコア
   const jiku = final.length >= 1 ? final[0] : null;
   const tai  = final.length >= 2 ? final[1] : null;
   const jikuUma   = jiku ? Number(jiku[0]) : '';
@@ -1814,7 +1861,6 @@ function calcLogicScore(day, targetR){
   const taiUma    = tai  ? Number(tai[0])  : '';
   const taiScore  = tai  ? Math.round(tai[1].score * 10) / 10  : '';
 
-  // 的中フラグ（◎軸が1〜3着に入ったか）
   const result = getRace(day, targetR);
   let hitFlag = '';
   if(result && jikuUma){
@@ -1827,7 +1873,7 @@ function calcLogicScore(day, targetR){
 function exportCSV(){
   const targetDays=allDays.length?allDays:[rtDayData].filter(Boolean);
   if(!targetDays.length){showStatus('csvStatus','保存するデータがありません','warn');return;}
-  let csv='日付,レース,馬番1着,馬番2着,馬番3着,枠1,枠2,枠連,1着人気,2着人気,3着人気,核成立,兄弟連鎖数,後半人気群,収束フラグ,◎馬番,◎スコア,○馬番,○スコア,的中\n';
+  let csv='日付,レース,馬番1着,馬番2着,馬番3着,枠1,枠2,枠連,1着人気,2着人気,3着人気,核成立,兄弟連鎖数,後半人気群,収束フラグ,◎馬番,◎スコア,○馬番,○スコア,的中,全頭人気\n';
   targetDays.forEach(day=>{
     for(let r=1;r<=12;r++){
       const d=getRace(day,r);if(!d)continue;
@@ -1838,7 +1884,10 @@ function exportCSV(){
           logicCols = `${ls.coreOk},${ls.brotherChainCount},${ls.domGrp},${ls.convergenceFrames},${ls.jikuUma},${ls.jikuScore},${ls.taiUma},${ls.taiScore},${ls.hitFlag}`;
         } catch(e){ logicCols = ',,,,,,,,,'; }
       }
-      csv+=`${day.date},${r}R,${d.uma[0]||''},${d.uma[1]||''},${d.uma[2]||''},${d.frames[0]||''},${d.frames[1]||''},${d.kura.join('-')},${d.pop1||''},${d.pop2||''},${d.pop3||''},${logicCols}\n`;
+      // v26.1: オッズ貼り付けで集めた全頭人気(あれば)をエンコードして最終列に出力
+      const fullPop = (d.fullPop) || (day._fullPop && day._fullPop[r]) || null;
+      const fullPopStr = fullPop ? Object.entries(fullPop).map(([u,p])=>`${u}:${p}`).join('|') : '';
+      csv+=`${day.date},${r}R,${d.uma[0]||''},${d.uma[1]||''},${d.uma[2]||''},${d.frames[0]||''},${d.frames[1]||''},${d.kura.join('-')},${d.pop1||''},${d.pop2||''},${d.pop3||''},${logicCols},${fullPopStr}\n`;
     }
   });
   const blob=new Blob([csv],{type:'text/csv;charset=utf-8;'});
@@ -1870,7 +1919,18 @@ function importCSV(input){
       if(!isNaN(u2)&&u2>0)rows.push({ord:2,frame:f2||0,num:u2});
       if(!isNaN(u3)&&u3>0)rows.push({ord:3,frame:0,num:u3});
       const kStr=cols[7]?cols[7].split('-').map(Number).filter(n=>!isNaN(n)&&n>0):[];
-      dayMap[date].races[rn]={n:rn,rows,kura:kStr.length>=2?kStr:[Math.min(f1||0,f2||0),Math.max(f1||0,f2||0)].filter(x=>x>0),pop1,pop2,pop3};
+      const race={n:rn,rows,kura:kStr.length>=2?kStr:[Math.min(f1||0,f2||0),Math.max(f1||0,f2||0)].filter(x=>x>0),pop1,pop2,pop3};
+      // v26.1: 全頭人気列(あれば)を復元
+      const fullPopCol = cols[20] ? cols[20].trim() : '';
+      if(fullPopCol){
+        const fp={};
+        fullPopCol.split('|').forEach(pair=>{
+          const [u,p]=pair.split(':').map(Number);
+          if(!isNaN(u)&&!isNaN(p))fp[u]=p;
+        });
+        if(Object.keys(fp).length)race.fullPop=fp;
+      }
+      dayMap[date].races[rn]=race;
     });
     const parsed=Object.values(dayMap).filter(d=>Object.keys(d.races).length>0);
     if(!parsed.length){showStatus('csvStatus','CSVを読み込めませんでした','warn');return;}
