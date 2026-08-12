@@ -102,6 +102,14 @@ tr.miss td{background:rgba(123,45,45,.15);}
 .crow .cr-cell.h1{background:rgba(201,168,76,.15);color:var(--go);border-color:rgba(201,168,76,.4);}
 .crow .cr-cell.h2{background:rgba(201,168,76,.35);color:var(--go);border-color:var(--go);font-weight:600;}
 .crow .cr-cell.h3{background:var(--go);color:#000;border-color:var(--go2);font-weight:700;}
+/* v26.4: 1・2着の出現回数ごとの色分け(その都度セル用) */
+.crow .cr-cell.occ1{background:rgba(201,168,76,.15);color:var(--go);border-color:rgba(201,168,76,.4);}
+.crow .cr-cell.occ2{background:rgba(46,90,150,.5);color:#8fc4ff;border-color:#3a6ea5;font-weight:600;}
+.crow .cr-cell.occ3{background:rgba(150,45,45,.5);color:#ffb3b3;border-color:#a54a4a;font-weight:600;}
+.crow .cr-cell.occ4{background:rgba(120,40,170,.45);color:#e0b3ff;border-color:#8e44ad;font-weight:700;}
+.crow .cr-cell.occ5{background:rgba(191,87,0,.45);color:#ffcc80;border-color:#bf5700;font-weight:700;}
+.crow .cr-cell.occ6{background:rgba(0,121,107,.45);color:#80e8dc;border-color:#00796b;font-weight:700;}
+.crow .cr-cell.occ7plus{background:#fff;color:#000;border-color:#fff;font-weight:900;}
 /* ★v24 馬番統計グリッド */
 .uma-stat-grid{display:grid;grid-template-columns:repeat(6,1fr);gap:4px;margin-top:8px;}
 @media(max-width:480px){.uma-stat-grid{grid-template-columns:repeat(4,1fr);}}
@@ -128,7 +136,7 @@ tr.miss td{background:rgba(123,45,45,.15);}
 <body>
 <div class="hdr">
   <div><div class="logo">HIRO LOGIC</div><div class="logo-sub">競馬出目パズル分析システム</div></div>
-  <div class="ver">v26.2</div>
+  <div class="ver">v26.4</div>
 </div>
 <div class="wrap">
   <div class="tabs">
@@ -780,7 +788,7 @@ function getAxisCandidates(day,targetR,popMap={}){
   const brother=analyzeBrother(day,maxR);
   const chainMaxR=targetR===12?10:maxR;
   const chain=analyzeChain(day,chainMaxR);
-  const ukcMaxR=targetR===12?10:maxR;
+  const ukcMaxR=maxR; // v26.3: 12R予測時も11Rまでのデータを見るよう修正(以前は10Rで打ち切っていたバグ)
   const ukc=analyzeUmaKuraChain(day,ukcMaxR);
   const cands={};
   const add=(uma,reason,score)=>{
@@ -1484,10 +1492,17 @@ function renderMatrix(day){
   activeUmas.forEach(uma=>{
     const cnt=umaCount[uma]||0;
     html+=`<div class="crow"><div class="cr-lbl">${uma}番</div>`;
+    let occCount=0; // v26.4: 1・2着のみを対象にした、その都度の出現回数カウンタ
     for(let r=1;r<=maxR;r++){
       const d=getRace(day,r);
       const pos=d?d.uma.indexOf(uma):-1;
-      const cls=pos<0?'':cnt>=3?'h3':cnt===2?'h2':'h1';
+      let cls='';
+      if(pos===0||pos===1){
+        occCount++;
+        cls = occCount>=7?'occ7plus':'occ'+occCount;
+      } else if(pos===2){
+        cls = cnt>=3?'h3':cnt===2?'h2':'h1'; // 3着セルは従来通りの色分けを維持
+      }
       html+=`<div class="cr-cell ${cls}">${pos>=0?pos+1+'着':''}</div>`;
     }
     html+=`</div>`;
@@ -1514,7 +1529,14 @@ function renderMatrix(day){
   for(let k=1;k<=8;k++){
     let cnt=0;for(let r=1;r<=maxR;r++){const d=getRace(day,r);if(d&&d.kura.includes(k))cnt++;}
     kHtml+=`<div class="crow"><div class="cr-lbl">${k}枠</div>`;
-    for(let r=1;r<=maxR;r++){const d=getRace(day,r);const has=d&&d.kura.includes(k);const cls=!has?'':cnt>=5?'h3':cnt>=3?'h2':'h1';kHtml+=`<div class="cr-cell ${cls}">${has?'●':''}</div>`;}
+    let occCountK=0; // v26.4: 枠番もその都度の出現回数で色分け(枠連は元々1・2着の枠しか記録していない)
+    for(let r=1;r<=maxR;r++){
+      const d=getRace(day,r);
+      const has=d&&d.kura.includes(k);
+      let cls='';
+      if(has){ occCountK++; cls = occCountK>=7?'occ7plus':'occ'+occCountK; }
+      kHtml+=`<div class="cr-cell ${cls}">${has?'●':''}</div>`;
+    }
     kHtml+=`<div class="cr-cell" style="min-width:28px;background:rgba(201,168,76,.1);color:var(--go);">${cnt>0?cnt+'回':''}</div>`;
     kHtml+=`</div>`;
   }
