@@ -136,7 +136,7 @@ tr.miss td{background:rgba(123,45,45,.15);}
 <body>
 <div class="hdr">
   <div><div class="logo">HIRO LOGIC</div><div class="logo-sub">競馬出目パズル分析システム</div></div>
-  <div class="ver">v26.4</div>
+  <div class="ver">v26.7</div>
 </div>
 <div class="wrap">
   <div class="tabs">
@@ -330,6 +330,7 @@ tr.miss td{background:rgba(123,45,45,.15);}
     <div class="card"><div class="ctitle" id="predict-label">予測結果</div><div id="axisResult"><p style="font-size:11px;color:var(--tx2);">入力タブで「軸馬を予測する」を押してください</p></div></div>
     <div class="card"><div class="ctitle">推奨馬連</div><div id="umarenResult"><p style="font-size:11px;color:var(--tx2);">-</p></div></div>
     <div class="card"><div class="ctitle">枠番収束アラート</div><div id="frameAlertResult"><p style="font-size:11px;color:var(--tx2);">-</p></div></div>
+    <div class="card"><div class="ctitle">📊 次点候補（3〜6位・参考情報）</div><div id="rankedResult"><p style="font-size:11px;color:var(--tx2);">-</p></div></div>
     <div class="card"><div class="ctitle">⚡ 馬番連続出現シグナル（参考情報）</div><div id="consecResult"><p style="font-size:11px;color:var(--tx2);">-</p></div></div>
   </div>
   <div id="tab-matrix" class="sec">
@@ -764,6 +765,21 @@ function analyzePop(day,maxR){
   return{pops,consecutive};
 }
 
+// v26.7: 4つの折り畳み(6-7,5-8,4-9,3-10)が全部成立しているかを見る「その日の信頼度」判定
+// (検証済み: 11R予測時、全部成立の日は的中率が有意に高い。12Rでは未検証)
+function checkDayConfidence(day, maxR){
+  const pairs=[[6,7],[5,8],[4,9],[3,10]];
+  const details=pairs.map(([a,b])=>{
+    if(b>maxR)return{a,b,hold:false,common:[]};
+    const dA=getRace(day,a),dB=getRace(day,b);
+    if(!dA||!dB)return{a,b,hold:false,common:[]};
+    const common=dA.uma.filter(u=>dB.uma.includes(u));
+    return{a,b,hold:common.length>0,common};
+  });
+  const allHold=details.every(d=>d.hold);
+  return{allHold,details};
+}
+
 function analyzeMirror(day){
   const r2=getRace(day,2),r3=getRace(day,3),r9=getRace(day,9),r10=getRace(day,10),r4=getRace(day,4);
   if(!r3||!r9||!r10)return{active:false};
@@ -776,7 +792,7 @@ function analyzeMirror(day){
   return{active:prereqOk&&chain9.length===0&&mirror3in10.length>0,prereqOk,core67,fold58,chain9broken:chain9.length===0,mirror3in10,mirror2pred:r2?r2.uma:[]};
 }
 
-function getAxisCandidates(day,targetR,popMap={}){
+function getAxisCandidates(day,targetR,popMap={},limit=2){
   // v26: データ検証の結果、以下を反映した簡素化ロジック
   //  - 兄弟連鎖(1-4-7-10R/2-5-8-11R/3-6-9-12R列)を主軸にする
   //  - 折り畳み(6-7R核・5-8R・2-11R等)・鏡面復活・12R専用拡張ロジックは
@@ -840,7 +856,7 @@ function getAxisCandidates(day,targetR,popMap={}){
     sorted=Object.entries(cands).sort((a,b)=>b[1].score-a[1].score);
   }
 
-  return sorted.slice(0,2);
+  return sorted.slice(0,limit);
 }
 
 function parseOdds12(){
@@ -937,11 +953,22 @@ function showPrediction(day,targetR,popMap={},frameMap={}){
   const label=targetR===11?'11R':'12R';
   document.getElementById('predict-label').textContent=`${label} 軸馬予測（1R〜${targetR-1}Rのデータで分析）`;
   const final=getAxisCandidates(day,targetR,popMap);
+  const rankedAll=getAxisCandidates(day,targetR,popMap,6); // v26.6: 3〜6位も見えるように拡張取得
   const frame=analyzeFrame(day,targetR-1);
   const pop=analyzePop(day,targetR-1);
   let html='';
+  // v26.7: 11R予測時のみ、その日の信頼度(4つの折り畳み全部成立か)を表示
+  if(targetR===11){
+    const conf=checkDayConfidence(day,targetR-1);
+    if(conf.allHold){
+      html+=`<div class="msg mgold" style="margin-bottom:8px;">🟡 高信頼度の日：6-7R・5-8R・4-9R・3-10Rの折り畳みが全部成立しています。検証上、この日は◎軸の的中率が平均より高い傾向があります。</div>`;
+    } else {
+      const holdCount=conf.details.filter(d=>d.hold).length;
+      html+=`<div class="msg minf" style="margin-bottom:8px;">通常の日：折り畳み(6-7,5-8,4-9,3-10)は${holdCount}/4組成立。全部揃う日ほどの信頼度アップは見られません。</div>`;
+    }
+  }
   if(!final.length){
-    html=`<p style="font-size:11px;color:var(--tx2);">ロジックから候補が見つかりませんでした。</p>`;
+    html+=`<p style="font-size:11px;color:var(--tx2);">ロジックから候補が見つかりませんでした。</p>`;
     frame.alerts.forEach(a=>html+=`<div class="msg mwrn">${a}</div>`);
   } else {
     html+=`<div class="axwrap">`;
@@ -967,6 +994,19 @@ function showPrediction(day,targetR,popMap={},frameMap={}){
     umHtml=`<p style="font-size:11px;color:var(--tx2);">候補なし</p>`;
   }
   document.getElementById('umarenResult').innerHTML=umHtml;
+
+  // v26.6: 3〜6位の次点候補を表示(参考情報。◎軸・○対抗の決定には使わない)
+  const rankedRest=rankedAll.slice(2,6);
+  let rankedHtml='';
+  if(!rankedRest.length){
+    rankedHtml='<p style="font-size:11px;color:var(--tx2);">次点候補なし</p>';
+  } else {
+    rankedRest.forEach(([uma,info],idx)=>{
+      const rank=idx+3;
+      rankedHtml+=`<div class="frow"><span class="flbl"><span class="bdg binf">${rank}位</span></span><span class="fval"><b style="color:var(--tx);">馬番${uma}</b> <span style="color:var(--tx3);font-size:10px;">スコア${Math.round(info.score*10)/10}</span><div style="font-size:10px;color:var(--tx2);margin-top:2px;">${info.reasons.join(' / ')}</div></span></div>`;
+    });
+  }
+  document.getElementById('rankedResult').innerHTML=rankedHtml;
   document.getElementById('frameAlertResult').innerHTML=frame.alerts.length
     ?frame.alerts.map(a=>`<div class="msg mwrn">${a}</div>`).join('')
     :'<p style="font-size:11px;color:var(--tx2);">収束アラートなし</p>';
@@ -1570,31 +1610,36 @@ function renderFrameTab(day){
 
 function buildStats(){
   if(!allDays.length)return;
-  let total=0,fH=0,bH=0,cH=0,mH=0,ukH=0,aH=0,rows='';
+  // v26.5: リーク修正(未来のレース結果を見ずに計算) + ◎軸/○対抗の厳密な的中率を追加
+  let total=0,fH=0,bH=0,cH=0,ukH=0,axisH=0,eitherH=0,rows='';
   const popPatterns={};
   let total12=0,r12hitFrom11=0;
   const pop12Patterns={};
+  const maskRace=(day,r)=>{const races={...day.races};delete races[r];return{...day,races};};
   allDays.forEach(day=>{
     const r11=getRace(day,11);if(!r11)return;total++;
     const r12=getRace(day,12);
-    const fold=analyzeFold(day,11);
-    const brother=analyzeBrother(day,10);
-    const chain=analyzeChain(day,10);
-    const mirror=analyzeMirror(day);
-    const ukc=analyzeUmaKuraChain(day,10);
+    const masked11=maskRace(day,11);
+    const fold=analyzeFold(masked11,11);
+    const brother=analyzeBrother(masked11,10);
+    const chain=analyzeChain(masked11,10);
+    const ukc=analyzeUmaKuraChain(masked11,10);
     const fC=[];fold.filter(f=>f.isPred&&f.common.length).forEach(f=>fC.push(...f.common));
     const bC=[];brother.forEach(b=>b.chains.forEach(c=>bC.push(...c.common)));
     const cC=chain.signals.map(s=>s.uma);
-    const mC=mirror.active?mirror.mirror2pred:[];
     const ukC=ukc.umaAlerts.map(a=>a.uma);
-    const aC=[...new Set([...fC,...bC,...cC,...mC,...ukC])];
     const f=r11.uma.slice(0,3).some(u=>fC.includes(u));
     const b=r11.uma.slice(0,3).some(u=>bC.includes(u));
     const c=r11.uma.slice(0,3).some(u=>cC.includes(u));
-    const m=mirror.active&&r11.uma.slice(0,3).some(u=>mC.includes(u));
     const uk=r11.uma.slice(0,3).some(u=>ukC.includes(u));
-    const a=r11.uma.slice(0,3).some(u=>aC.includes(u));
-    if(f)fH++;if(b)bH++;if(c)cH++;if(m)mH++;if(uk)ukH++;if(a)aH++;
+    if(f)fH++;if(b)bH++;if(c)cH++;if(uk)ukH++;
+    // ◎軸・○対抗(実際にアプリが出す予測そのもの)の的中率
+    const axisCands=getAxisCandidates(masked11,11,{});
+    const axisUma=axisCands.length?Number(axisCands[0][0]):null;
+    const taiUma=axisCands.length>=2?Number(axisCands[1][0]):null;
+    const axisHit=axisUma&&r11.uma.includes(axisUma);
+    const eitherHit=axisHit||(taiUma&&r11.uma.includes(taiUma));
+    if(axisHit)axisH++;if(eitherHit)eitherH++;
     if(r12){
       total12++;
       if(r11.uma.some(u=>r12.uma.includes(u)))r12hitFrom11++;
@@ -1608,7 +1653,7 @@ function buildStats(){
       popPatterns[pattern]=(popPatterns[pattern]||0)+1;
     }
     const r12str=r12?r12.uma.slice(0,3).join('-'):'-';
-    rows+=`<tr class="${a?'hit':'miss'}" style="cursor:pointer;" onclick="selectDayByDate('${day.date}')"><td style="color:var(--go);text-decoration:underline;">${day.date}</td><td>${fC.join(',')||'-'}</td><td>${bC.join(',')||'-'}</td><td>${cC.join(',')||'-'}</td><td>${r11.uma.slice(0,3).join('-')}</td><td>${r11.pop1?popGroup(r11.pop1)+'-'+popGroup(r11.pop2)+'-'+popGroup(r11.pop3):'-'}</td><td>${r12str}</td><td>${a?'✓':'✗'}</td></tr>`;
+    rows+=`<tr class="${eitherHit?'hit':'miss'}" style="cursor:pointer;" onclick="selectDayByDate('${day.date}')"><td style="color:var(--go);text-decoration:underline;">${day.date}</td><td>${axisUma||'-'}</td><td>${taiUma||'-'}</td><td>${r11.uma.slice(0,3).join('-')}</td><td>${r11.pop1?popGroup(r11.pop1)+'-'+popGroup(r11.pop2)+'-'+popGroup(r11.pop3):'-'}</td><td>${r12str}</td><td>${eitherHit?'✓':'✗'}</td></tr>`;
   });
   const pct=n=>total?Math.round(n/total*100)+'%':'-%';
   const sortedPatterns=Object.entries(popPatterns).sort((a,b)=>b[1]-a[1]);
@@ -1634,17 +1679,19 @@ function buildStats(){
   const chainRate=total12>0?Math.round(r12hitFrom11/total12*100):0;
   const chainHtml=total12>0?`<div class="msg ${chainRate>=50?'mgold':'minf'}" style="margin-bottom:8px;">11R馬番が12Rに連鎖：${r12hitFrom11}/${total12}日 (${chainRate}%)${chainRate>=50?' → 有意な連鎖あり':' → 偶然の範囲'}</div>`:'';
   document.getElementById('statsContent').innerHTML=`
+    <div style="font-size:10px;color:var(--tx3);margin-bottom:8px;">※v26.5：リーク(未来のレース結果を見て予測してしまう不具合)を修正済み。◎軸・○対抗はアプリが実際に出す予測そのものの的中率、他の項目は各手法が挙げた候補の中に的中馬が含まれていたか(参考・緩め基準)です。</div>
     <div class="sgrid">
-      <div class="sbox"><div class="snum">${pct(aH)}</div><div class="slbl">総合的中率</div></div>
-      <div class="sbox"><div class="snum">${pct(fH)}</div><div class="slbl">折り畳み</div></div>
-      <div class="sbox"><div class="snum">${pct(bH)}</div><div class="slbl">兄弟連鎖</div></div>
-      <div class="sbox"><div class="snum">${pct(cH)}</div><div class="slbl">馬番連鎖</div></div>
-      <div class="sbox"><div class="snum">${pct(ukH)}</div><div class="slbl">馬連連続</div></div>
+      <div class="sbox"><div class="snum">${pct(eitherH)}</div><div class="slbl">◎軸or○対抗 的中率</div></div>
+      <div class="sbox"><div class="snum">${pct(axisH)}</div><div class="slbl">◎軸単独 的中率</div></div>
       <div class="sbox"><div class="snum">${total}</div><div class="slbl">分析日数</div></div>
+      <div class="sbox"><div class="snum">${pct(fH)}</div><div class="slbl">折り畳み(候補内)</div></div>
+      <div class="sbox"><div class="snum">${pct(bH)}</div><div class="slbl">兄弟連鎖(候補内)</div></div>
+      <div class="sbox"><div class="snum">${pct(cH)}</div><div class="slbl">馬番連鎖(候補内)</div></div>
+      <div class="sbox"><div class="snum">${pct(ukH)}</div><div class="slbl">馬連連続(候補内)</div></div>
     </div>
     ${patternHtml}${chainHtml}${pattern12Html}
     <div class="stitle">日別詳細（日付をクリックで詳細分析）</div>
-    <div style="overflow-x:auto;"><table><thead><tr><th>日付</th><th>折り畳み</th><th>兄弟</th><th>連鎖</th><th>11R結果</th><th>人気</th><th>12R結果</th><th>判定</th></tr></thead><tbody>${rows}</tbody></table></div>`;
+    <div style="overflow-x:auto;"><table><thead><tr><th>日付</th><th>◎軸</th><th>○対抗</th><th>11R結果</th><th>人気</th><th>12R結果</th><th>判定</th></tr></thead><tbody>${rows}</tbody></table></div>`;
 }
 
 function selectDayByDate(date){
@@ -1777,9 +1824,21 @@ function renderAllStats(){
 }
 
 function clearAllDays(){
-  allDays=[];buildVerifyPills();
+  allDays=[];currentDay=null;
+  buildVerifyPills();
   document.getElementById('dayCount').textContent=0;
   document.getElementById('statsContent').innerHTML='<p style="font-size:11px;color:var(--tx2);">データをクリアしました</p>';
+  // v26.5: 過去検証データクリア時に、他タブ(ロジック分析・連鎖マトリクス・枠番)の残留表示も一緒に消す
+  document.getElementById('analysisContent').innerHTML='<p style="font-size:11px;color:var(--tx2);">データを読み込んでください</p>';
+  document.getElementById('verifyResultBox').innerHTML='<p style="font-size:11px;color:var(--tx2);">日付を選択してください</p>';
+  document.getElementById('umaMatrix').innerHTML='';
+  document.getElementById('kuraMatrix').innerHTML='';
+  document.getElementById('chainSignal').innerHTML='';
+  document.getElementById('frameCount').innerHTML='';
+  document.getElementById('frameSeq').innerHTML='';
+  ['analysisPills','matrixPills','framePills'].forEach(id=>{document.getElementById(id).innerHTML='';});
+  const allUmaCard=document.getElementById('allUmaCard');if(allUmaCard)allUmaCard.style.display='none';
+  const allFrameCard=document.getElementById('allFrameCard');if(allFrameCard)allFrameCard.style.display='none';
 }
 
 function buildVerifyPills(){
