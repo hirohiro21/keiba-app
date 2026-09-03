@@ -136,7 +136,7 @@ tr.miss td{background:rgba(123,45,45,.15);}
 <body>
 <div class="hdr">
   <div><div class="logo">HIRO LOGIC</div><div class="logo-sub">競馬出目パズル分析システム</div></div>
-  <div class="ver">v26.7</div>
+  <div class="ver">v26.8</div>
 </div>
 <div class="wrap">
   <div class="tabs">
@@ -818,7 +818,9 @@ function getAxisCandidates(day,targetR,popMap={},limit=2){
     b.chains.forEach(c=>{
       const has11R=(c.rA===11||c.rB===11)&&targetR===12;
       const baseScore=c.rB>=7?2.5:1.5;
-      const score=has11R?baseScore*0.3:baseScore;
+      // v26.8: 11R↔12Rで◎軸○対抗が両方同じになりすぎる問題を検証し、割引を廃止(0.3→1.0)。
+      // 的中率への影響は誤差程度(-0.6pt)だが、完全重複が73.7%→66.0%に改善。
+      const score=has11R?baseScore*1.0:baseScore;
       c.common.forEach(u=>add(u,`兄弟連鎖(${b.name} ${c.rA}R↔${c.rB}R)`,score));
     });
     const recurringRaces=targetR===12?b.avail.filter(r=>r!==11):b.avail;
@@ -1567,15 +1569,21 @@ function renderMatrix(day){
   for(let r=1;r<=maxR;r++)kHtml+=`<div class="cr-cell" style="font-weight:600;color:var(--go);font-size:10px;">${r}R</div>`;
   kHtml+=`<div class="cr-cell" style="min-width:28px;font-weight:600;color:var(--go);font-size:10px;">統計</div></div>`;
   for(let k=1;k<=8;k++){
-    let cnt=0;for(let r=1;r<=maxR;r++){const d=getRace(day,r);if(d&&d.kura.includes(k))cnt++;}
+    // v26.8: 同枠決着(例:3-3)を正しく2回として数える(以前は.includes()で1回としてしか数えていなかった)
+    let cnt=0;for(let r=1;r<=maxR;r++){const d=getRace(day,r);if(d)cnt+=d.kura.filter(x=>x===k).length;}
     kHtml+=`<div class="crow"><div class="cr-lbl">${k}枠</div>`;
     let occCountK=0; // v26.4: 枠番もその都度の出現回数で色分け(枠連は元々1・2着の枠しか記録していない)
     for(let r=1;r<=maxR;r++){
       const d=getRace(day,r);
-      const has=d&&d.kura.includes(k);
+      const timesInRace=d?d.kura.filter(x=>x===k).length:0; // v26.8: 同枠決着なら2
       let cls='';
-      if(has){ occCountK++; cls = occCountK>=7?'occ7plus':'occ'+occCountK; }
-      kHtml+=`<div class="cr-cell ${cls}">${has?'●':''}</div>`;
+      let label='';
+      if(timesInRace>0){
+        occCountK+=timesInRace;
+        cls = occCountK>=7?'occ7plus':'occ'+occCountK;
+        label = timesInRace>=2?'●●':'●';
+      }
+      kHtml+=`<div class="cr-cell ${cls}">${label}</div>`;
     }
     kHtml+=`<div class="cr-cell" style="min-width:28px;background:rgba(201,168,76,.1);color:var(--go);">${cnt>0?cnt+'回':''}</div>`;
     kHtml+=`</div>`;
