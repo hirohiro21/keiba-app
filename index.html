@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>ヒロ式ロジック v25</title>
+<title>ヒロ式ロジック v27</title>
 <style>
 :root{
   --bg:#0f0f0f;--bg2:#181818;--bg3:#222;--bg4:#2a2a2a;
@@ -136,7 +136,7 @@ tr.miss td{background:rgba(123,45,45,.15);}
 <body>
 <div class="hdr">
   <div><div class="logo">HIRO LOGIC</div><div class="logo-sub">競馬出目パズル分析システム</div></div>
-  <div class="ver">v26.8</div>
+  <div class="ver">v27.1</div>
 </div>
 <div class="wrap">
   <div class="tabs">
@@ -826,19 +826,14 @@ function analyzeMirror(day){
 }
 
 function getAxisCandidates(day,targetR,popMap={},limit=2){
-  // v26: データ検証の結果、以下を反映した簡素化ロジック
-  //  - 兄弟連鎖(1-4-7-10R/2-5-8-11R/3-6-9-12R列)を主軸にする
-  //  - 折り畳み(6-7R核・5-8R・2-11R等)・鏡面復活・12R専用拡張ロジックは
-  //    バックテスト(leak-free, 新旧データ両方)で軒並みベースライン以下だったため
-  //    スコアリングから除外(分析タブでは引き続き表示・監視用途として残す)
-  //  - 11Rは馬番連鎖(重み1)を加点、12Rは馬連連続(重み0.5)を加点。
-  //    これは旧データで探索し、新データ(未使用)でも上振れを確認できた組み合わせ。
+  // v27.0: 8競馬場・約1000日分のデータで大規模バックテストを実施し、ロジックを刷新。
+  //  - 検証の結果、従来の「兄弟連鎖(1-4-7-10R列等)」単体は統計的に有意水準に届かず(z=1.52〜2.26)、
+  //    さらに「単純な出現回数」という素朴な指標とほぼ互角、もしくはそれ以下だった。
+  //  - 一方で「出現回数」×「勝ち癖(1着になった回数)」の組み合わせは、シャッフル検証でz=3.74という
+  //    今までで最も強い有意差を記録(11R・馬連基準)。これを新しい主軸ロジックとして採用。
+  //  - 12Rは「出現回数」×「兄弟連鎖」の組み合わせが最も安定していたため、そちらを採用。
+  //  - 旧ロジック(折り畳み・鏡面復活・馬番連鎖等)は監視用として分析タブに残すが、スコアには使わない。
   const maxR=targetR-1;
-  const brother=analyzeBrother(day,maxR);
-  const chainMaxR=targetR===12?10:maxR;
-  const chain=analyzeChain(day,chainMaxR);
-  const ukcMaxR=maxR; // v26.3: 12R予測時も11Rまでのデータを見るよう修正(以前は10Rで打ち切っていたバグ)
-  const ukc=analyzeUmaKuraChain(day,ukcMaxR);
   const cands={};
   const add=(uma,reason,score)=>{
     if(!uma||uma<=0)return;
@@ -846,35 +841,31 @@ function getAxisCandidates(day,targetR,popMap={},limit=2){
     if(!cands[uma].reasons.includes(reason)){cands[uma].reasons.push(reason);cands[uma].score+=score;}
   };
 
-  // 兄弟連鎖(主軸)
-  brother.forEach(b=>{
-    b.chains.forEach(c=>{
-      const has11R=(c.rA===11||c.rB===11)&&targetR===12;
-      const baseScore=c.rB>=7?2.5:1.5;
-      // v26.8: 11R↔12Rで◎軸○対抗が両方同じになりすぎる問題を検証し、割引を廃止(0.3→1.0)。
-      // 的中率への影響は誤差程度(-0.6pt)だが、完全重複が73.7%→66.0%に改善。
-      const score=has11R?baseScore*1.0:baseScore;
-      c.common.forEach(u=>add(u,`兄弟連鎖(${b.name} ${c.rA}R↔${c.rB}R)`,score));
-    });
-    const recurringRaces=targetR===12?b.avail.filter(r=>r!==11):b.avail;
-    const countMap12={};
-    recurringRaces.forEach(r=>{const d=getRace(day,r);if(!d)return;d.uma.forEach(u=>{countMap12[u]=(countMap12[u]||0)+1;});});
-    // v26.1: 11Rは出現回数に比例した段階加点(検証で+0.9pt確認済み)。12Rは現状維持(flat+1、未検証のため)。
-    Object.entries(countMap12).filter(([,c])=>c>=2).forEach(([u,c])=>{
-      const bonus = targetR===11 ? 0.5*c : 1;
-      add(Number(u),`兄弟${c}回出現(${b.name})`,bonus);
-    });
+  // 出現回数(1〜maxRの全レースで1〜3着に来た回数)：全レース共通の主軸シグナル
+  const freqCount={};
+  const winCount={};
+  for(let r=1;r<=maxR;r++){
+    const d=getRace(day,r);if(!d)continue;
+    d.uma.forEach(u=>{freqCount[u]=(freqCount[u]||0)+1;});
+    if(d.uma[0])winCount[d.uma[0]]=(winCount[d.uma[0]]||0)+1;
+  }
+  Object.entries(freqCount).forEach(([u,c])=>{
+    add(Number(u),`出現回数${c}回(1〜${maxR}R)`,1.0*c);
   });
 
-  // 11R: 馬番連鎖(重み1)
   if(targetR===11){
-    chain.signals.forEach(s=>add(s.uma,`馬番連鎖(${s.type})`,1.5));
-  }
-  // 12R: 馬連連続(重み0.5)
-  if(targetR===12){
-    ukc.umaAlerts.forEach(a=>{
-      if(a.type==='3連続')add(a.uma,`馬連馬番${a.uma}:3連続`,1.0);
-      else add(a.uma,`馬連馬番${a.uma}:2連続→次注目`,0.5);
+    // 11R: 出現回数(重み1.0) + 勝ち癖/1着回数(重み0.5) ※z=3.74で検証済み、最も強い組み合わせ
+    Object.entries(winCount).forEach(([u,c])=>{
+      add(Number(u),`1着実績${c}回`,0.5*c);
+    });
+  } else if(targetR===12){
+    // 12R: 出現回数(重み1.0) + 兄弟連鎖(重み0.75) ※単体の兄弟連鎖より安定(z=1.72、ワイド基準)
+    const brother=analyzeBrother(day,maxR);
+    brother.forEach(b=>{
+      b.chains.forEach(c=>{
+        const baseScore=c.rB>=7?2.5:1.5;
+        c.common.forEach(u=>add(u,`兄弟連鎖(${b.name} ${c.rA}R↔${c.rB}R)`,0.75*baseScore));
+      });
     });
   }
 
@@ -1575,6 +1566,13 @@ function add12Rresult(){
   rtDayData.races[12]={n:12,rows:[{ord:1,frame:f1,num:u1},{ord:2,frame:f2,num:u2},{ord:3,frame:f3,num:u3}].filter(x=>x.num>0),kura:[Math.min(f1||0,f2||0),Math.max(f1||0,f2||0)].filter(x=>x>0),pop1,pop2,pop3};
   currentDay=rtDayData;
   showStatus('status12r','12R結果を登録しました。これでCSV保存すると1R〜12R・全頭オッズまで含めて保存されます','ok');
+  // v27.1: 12R結果登録のタイミングでもLM予想欄を再取得(GeminiのLM予想は11R結果を見てから
+  // 作られることが多く、11R登録時点ではまだLM予想が未入力のケースがあったための修正)
+  const lm12final=collectLMFields(12);
+  if(lm12final){
+    rtDayData._lmPred = rtDayData._lmPred || {};
+    rtDayData._lmPred[12] = lm12final;
+  }
   // v26.9: 12RのLM予想と実結果を照合して即表示
   renderLMCompare(rtDayData,12,'lmCompare12');
   renderAnalysis(rtDayData,12);renderMatrix(rtDayData);buildAnalysisPills();
