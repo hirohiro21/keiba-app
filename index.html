@@ -136,7 +136,7 @@ tr.miss td{background:rgba(123,45,45,.15);}
 <body>
 <div class="hdr">
   <div><div class="logo">HIRO LOGIC</div><div class="logo-sub">競馬出目パズル分析システム</div></div>
-  <div class="ver">v27.1</div>
+  <div class="ver">v27.6</div>
 </div>
 <div class="wrap">
   <div class="tabs">
@@ -219,6 +219,7 @@ tr.miss td{background:rgba(123,45,45,.15);}
           <input type="number" id="r11heads" style="width:65px;" placeholder="例:16" min="1" max="18">
           <label style="font-size:11px;color:var(--tx2);margin-left:8px;">1人気馬番</label>
           <input type="number" id="r11fav" style="width:60px;" placeholder="例:5" min="1" max="18">
+          <button class="btn" style="border-color:var(--go);color:var(--go);" onclick="autoFillFrames('pop11grid','r11heads')">▶ 頭数から枠を自動入力</button>
         </div>
         <div class="stitle">各馬の人気順位</div>
         <div style="margin-bottom:8px;">
@@ -265,9 +266,18 @@ tr.miss td{background:rgba(123,45,45,.15);}
         </div>
         <div style="margin-top:10px;">
           <div style="font-size:11px;color:var(--tx2);margin-bottom:4px;">12R出走馬オッズ（任意）</div>
+          <div class="brow" style="margin-top:0;margin-bottom:6px;">
+            <label style="font-size:11px;color:var(--tx2);">出走頭数</label>
+            <input type="number" id="r12heads" style="width:65px;" placeholder="例:16" min="1" max="18">
+            <button class="btn" style="border-color:var(--go);color:var(--go);" onclick="autoFillFrames('pop12grid','r12heads')">▶ 頭数から枠を自動入力</button>
+          </div>
           <textarea id="oddsText12" style="width:100%;height:70px;background:var(--bg3);border:1px solid var(--bd2);border-radius:6px;color:var(--tx);font-size:10px;font-family:monospace;padding:6px;resize:vertical;" placeholder="JRAオッズ表（人気順）を貼り付け&#10;人気&#9;枠番&#9;馬番&#9;馬名..."></textarea>
           <button class="btn" onclick="parseOdds12()" style="margin-top:4px;padding:6px 14px;font-size:12px;">オッズから人気を計算</button>
           <div class="popgrid" id="pop12grid" style="margin-top:8px;"></div>
+          <div class="brow">
+            <button class="btn" style="border-color:var(--go);color:var(--go);" onclick="predict12R()">▶ 枠・オッズを反映して12R予測を更新</button>
+          </div>
+          <div style="font-size:10px;color:var(--tx3);margin-top:2px;">※各馬の「枠」欄を入力すると、◎軸の隣接枠にいる馬を○対抗の優先候補として加点します(v27.4)</div>
         </div>
         <div class="card" style="background:var(--bg3);border:1px solid rgba(120,140,255,.4);margin-top:10px;">
           <div class="ctitle" style="color:#8aabff;">🤖 LM（Gemini）予想を貼り付け（任意・12R）</div>
@@ -825,7 +835,7 @@ function analyzeMirror(day){
   return{active:prereqOk&&chain9.length===0&&mirror3in10.length>0,prereqOk,core67,fold58,chain9broken:chain9.length===0,mirror3in10,mirror2pred:r2?r2.uma:[]};
 }
 
-function getAxisCandidates(day,targetR,popMap={},limit=2){
+function getAxisCandidates(day,targetR,popMap={},limit=2,frameMap={}){
   // v27.0: 8競馬場・約1000日分のデータで大規模バックテストを実施し、ロジックを刷新。
   //  - 検証の結果、従来の「兄弟連鎖(1-4-7-10R列等)」単体は統計的に有意水準に届かず(z=1.52〜2.26)、
   //    さらに「単純な出現回数」という素朴な指標とほぼ互角、もしくはそれ以下だった。
@@ -867,6 +877,23 @@ function getAxisCandidates(day,targetR,popMap={},limit=2){
         c.common.forEach(u=>add(u,`兄弟連鎖(${b.name} ${c.rA}R↔${c.rB}R)`,0.75*baseScore));
       });
     });
+    // v27.4: 隣接枠ボーナス(◎軸の隣の枠(±1)にいる馬に加点)。
+    // 8競馬場・1万2千レース超で「隣接枠が枠連を組む率」がランダムよりz=9.48で有意に高いことを確認。
+    // ○対抗選びに組み込んでチューニングした結果、重み1.0で12Rのみz=1.25→3.10まで改善(11Rは逆効果だったため12R限定)。
+    if(Object.keys(frameMap).length>0){
+      const preSorted=Object.entries(cands).sort((a,b)=>b[1].score-a[1].score);
+      const provisionalAxis=preSorted.length?Number(preSorted[0][0]):null;
+      const axisFrame=provisionalAxis?frameMap[provisionalAxis]:null;
+      if(axisFrame){
+        Object.entries(frameMap).forEach(([uma,frame])=>{
+          const u=Number(uma);
+          if(u===provisionalAxis)return;
+          if(frame===axisFrame-1||frame===axisFrame+1){
+            add(u,`◎軸(${axisFrame}枠)の隣接枠(${frame}枠)`,1.0);
+          }
+        });
+      }
+    }
   }
 
   let sorted=Object.entries(cands).sort((a,b)=>b[1].score-a[1].score);
@@ -921,6 +948,46 @@ function parseOdds(){
   let count=0;
   Object.entries(popMap).forEach(([uma,pop])=>{const el=document.getElementById('pop11grid-'+uma);if(el){el.value=pop;count++;}});
   alert(count+'頭分の人気を設定しました（▶11R軸馬を予測するを押してください）');
+}
+
+// v27.5: 出走頭数から枠番を自動計算するJRA公式ルール。
+// 9〜16頭：外側(8枠)から2頭ずつ組み、残りが内側の1頭ずつの枠になる
+// 17〜18頭：さらに外側の枠が3頭になる（8頭以下は1頭=1枠）
+function computeFrameAllocation(n){
+  if(n<=8){
+    const counts=Array(8).fill(0);
+    for(let i=0;i<n;i++)counts[i]=1;
+    return counts;
+  }
+  if(n<=16){
+    const x=n-8;
+    const counts=Array(8).fill(1);
+    for(let i=8-x;i<8;i++)counts[i]=2;
+    return counts;
+  }
+  const y=n-16;
+  const counts=Array(8).fill(2);
+  for(let i=8-y;i<8;i++)counts[i]=3;
+  return counts;
+}
+function horseToFrame(n, horseNum){
+  const counts=computeFrameAllocation(n);
+  let cum=0;
+  for(let f=0;f<8;f++){
+    cum+=counts[f];
+    if(horseNum<=cum)return f+1;
+  }
+  return null;
+}
+function autoFillFrames(gridId, headsInputId){
+  const n=parseInt(document.getElementById(headsInputId).value);
+  if(!n||n<1||n>18){alert('出走頭数を1〜18で入力してください');return;}
+  let count=0;
+  for(let h=1;h<=n;h++){
+    const el=document.getElementById(gridId+'-frame-'+h);
+    if(el){el.value=horseToFrame(n,h);count++;}
+  }
+  alert(count+'頭分の枠番を自動入力しました');
 }
 
 function toggleG1Mode(){
@@ -978,8 +1045,8 @@ function analyzeG1Frame(day,targetR,horses){
 function showPrediction(day,targetR,popMap={},frameMap={}){
   const label=targetR===11?'11R':'12R';
   document.getElementById('predict-label').textContent=`${label} 軸馬予測（1R〜${targetR-1}Rのデータで分析）`;
-  const final=getAxisCandidates(day,targetR,popMap);
-  const rankedAll=getAxisCandidates(day,targetR,popMap,6); // v26.6: 3〜6位も見えるように拡張取得
+  const final=getAxisCandidates(day,targetR,popMap,2,frameMap);
+  const rankedAll=getAxisCandidates(day,targetR,popMap,6,frameMap); // v26.6: 3〜6位も見えるように拡張取得
   const frame=analyzeFrame(day,targetR-1);
   const pop=analyzePop(day,targetR-1);
   let html='';
@@ -1329,20 +1396,25 @@ function renderLMCompare(day,targetR,containerId){
   const claudeFinal=getAxisCandidates(day,targetR,{});
   const claudeAxis=claudeFinal.length?Number(claudeFinal[0][0]):null;
   const claudeTai=claudeFinal.length>=2?Number(claudeFinal[1][0]):null;
-  const claudeHit=claudeAxis&&result.uma.includes(claudeAxis);
+  const claudeAxisHit=claudeAxis&&result.uma.includes(claudeAxis);
+  const claudeTaiHit=claudeTai&&result.uma.includes(claudeTai);
+  const claudeHitAny=claudeAxisHit||claudeTaiHit; // v27.3: Claude側の◎or○総合判定を追加
   const lmHitAxis=lmPred.axis.filter(u=>result.uma.includes(u));
   const lmHitAny=lmPred.axis.some(u=>result.uma.includes(u))||lmPred.taiko.some(u=>result.uma.includes(u));
   let html=`<div class="card" style="border:2px solid #5878d0;margin-top:10px;"><div class="ctitle" style="color:#8aabff;">🤖 Claude vs LM 的中比較（${targetR}R）</div>`;
   html+=`<div style="font-size:11px;color:var(--tx2);margin-bottom:8px;">実際の結果：馬${result.uma.join('-')}</div>`;
   html+=`<div style="display:flex;gap:8px;flex-wrap:wrap;">`;
-  html+=`<div style="flex:1;min-width:140px;background:rgba(201,168,76,.1);border:1px solid var(--go);border-radius:8px;padding:8px 10px;"><div style="font-size:10px;color:var(--tx2);">Claude ◎軸</div><div style="font-size:18px;font-weight:700;color:var(--go);">${claudeAxis||'-'}番</div><div style="font-size:11px;">${claudeHit?'✅的中':'❌'}</div></div>`;
+  html+=`<div style="flex:1;min-width:140px;background:rgba(201,168,76,.1);border:1px solid var(--go);border-radius:8px;padding:8px 10px;"><div style="font-size:10px;color:var(--tx2);">Claude ◎軸</div><div style="font-size:18px;font-weight:700;color:var(--go);">${claudeAxis||'-'}番</div><div style="font-size:11px;">${claudeAxisHit?'✅的中':'❌'}</div></div>`;
+  html+=`<div style="flex:1;min-width:140px;background:rgba(201,168,76,.1);border:1px solid var(--go);border-radius:8px;padding:8px 10px;"><div style="font-size:10px;color:var(--tx2);">Claude ○対抗</div><div style="font-size:18px;font-weight:700;color:var(--go);">${claudeTai||'-'}番</div><div style="font-size:11px;">${claudeTaiHit?'✅的中':'❌'}</div></div>`;
+  html+=`</div><div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:6px;">`;
   html+=`<div style="flex:1;min-width:140px;background:rgba(88,120,208,.1);border:1px solid #5878d0;border-radius:8px;padding:8px 10px;"><div style="font-size:10px;color:var(--tx2);">LM ◎軸${lmPred.axis.length>=2?'(複数)':''}</div><div style="font-size:18px;font-weight:700;color:#8aabff;">${lmPred.axis.join('・')||'-'}番</div><div style="font-size:11px;">${lmHitAxis.length?'✅的中('+lmHitAxis.join('・')+')':'❌'}</div></div>`;
   html+=`</div>`;
   if(lmPred.taiko.length){
     const lmTaikoHit=lmPred.taiko.filter(u=>result.uma.includes(u));
     html+=`<div style="font-size:11px;color:var(--tx2);margin-top:8px;">LM○相手候補：${lmPred.taiko.join('・')} → ${lmTaikoHit.length?'的中含む('+lmTaikoHit.join('・')+')':'的中なし'}</div>`;
   }
-  html+=`<div style="font-size:11px;margin-top:6px;color:${lmHitAny?'#40916c':'#c1121f'};font-weight:600;">LM総合：${lmHitAny?'◎軸or○対抗のいずれかが的中':'的中なし'}</div>`;
+  html+=`<div style="font-size:11px;margin-top:6px;color:${claudeHitAny?'#40916c':'#c1121f'};font-weight:600;">Claude総合：${claudeHitAny?'◎軸or○対抗のいずれかが的中':'的中なし'}</div>`;
+  html+=`<div style="font-size:11px;margin-top:2px;color:${lmHitAny?'#40916c':'#c1121f'};font-weight:600;">LM総合：${lmHitAny?'◎軸or○対抗のいずれかが的中':'的中なし'}</div>`;
   html+=`</div>`;
   el.innerHTML=html;
 }
@@ -1441,6 +1513,25 @@ function parse11Rresult(){
 
   const msg=`11R読み込み完了：1着${sorted[0]?sorted[0].frame+'枠'+sorted[0].num+'番':'?'} 2着${sorted[1]?sorted[1].frame+'枠'+sorted[1].num+'番':'?'}${p1?' 人気:'+p1+'-'+(p2||'?')+'-'+(p3||'?'):''}`;
   showStatus('status11r_parse', msg, 'ok');
+}
+
+// v27.4: 枠・オッズ入力を反映して12R予測を再計算するための専用関数。
+// 12R結果を登録する前であれば、何度でも呼び出して最新の入力内容を反映できる。
+function predict12R(){
+  if(!rtDayData||!getRace(rtDayData,11)){showStatus('status11r','先に11R結果を登録してください','warn');return;}
+  const popMap12={},frameMap12={};
+  for(let i=1;i<=18;i++){
+    const v=document.getElementById('pop12grid-'+i);
+    const f=document.getElementById('pop12grid-frame-'+i);
+    if(v&&v.value)popMap12[i]=parseInt(v.value);
+    if(f&&f.value)frameMap12[i]=parseInt(f.value);
+  }
+  if(Object.keys(popMap12).length>0){
+    rtDayData._fullPop = rtDayData._fullPop || {};
+    rtDayData._fullPop[12] = popMap12;
+  }
+  showPrediction(rtDayData,12,popMap12,frameMap12);
+  showStatus('status11r','枠・オッズを反映して12R予測を更新しました','ok');
 }
 
 function add11Rresult(){
@@ -2071,13 +2162,31 @@ function renderVerifyResult(day){
   el.innerHTML=html;
 }
 
+function calcAxisTai(day, targetR){
+  // v27.2: 軸・対抗(◎馬番,○馬番)の計算を、他の診断用データから完全に分離。
+  // 以前は1つのtry/catchにまとめていたため、無関係な計算(核成立や枠連鎖など)で
+  // エラーが起きると、軸・対抗まで巻き添えでCSVから消えてしまう問題があった。
+  const final = getAxisCandidates(day, targetR, {});
+  const jiku = final.length >= 1 ? final[0] : null;
+  const tai  = final.length >= 2 ? final[1] : null;
+  const jikuUma   = jiku ? Number(jiku[0]) : '';
+  const jikuScore = jiku ? Math.round(jiku[1].score * 10) / 10 : '';
+  const taiUma    = tai  ? Number(tai[0])  : '';
+  const taiScore  = tai  ? Math.round(tai[1].score * 10) / 10  : '';
+  const result = getRace(day, targetR);
+  let hitFlag = '';
+  if(result && jikuUma){
+    hitFlag = result.uma.includes(jikuUma) ? 1 : 0;
+  }
+  return {jikuUma, jikuScore, taiUma, taiScore, hitFlag};
+}
+
 function calcLogicScore(day, targetR){
   const maxR = targetR - 1;
   const fold = analyzeFold(day, targetR);
   const brother = analyzeBrother(day, maxR);
   const pop = analyzePop(day, maxR);
   const fChain = analyzeFrameChain(day, maxR);
-  const final = getAxisCandidates(day, targetR, {});
 
   const coreOk = fold[0].common.length > 0 ? 1 : 0;
 
@@ -2094,20 +2203,7 @@ function calcLogicScore(day, targetR){
     .map(([f]) => f+'枠')
     .join('|');
 
-  const jiku = final.length >= 1 ? final[0] : null;
-  const tai  = final.length >= 2 ? final[1] : null;
-  const jikuUma   = jiku ? Number(jiku[0]) : '';
-  const jikuScore = jiku ? Math.round(jiku[1].score * 10) / 10 : '';
-  const taiUma    = tai  ? Number(tai[0])  : '';
-  const taiScore  = tai  ? Math.round(tai[1].score * 10) / 10  : '';
-
-  const result = getRace(day, targetR);
-  let hitFlag = '';
-  if(result && jikuUma){
-    hitFlag = result.uma.includes(jikuUma) ? 1 : 0;
-  }
-
-  return {coreOk, brotherChainCount, domGrp, convergenceFrames, jikuUma, jikuScore, taiUma, taiScore, hitFlag};
+  return {coreOk, brotherChainCount, domGrp, convergenceFrames};
 }
 
 function exportCSV(){
@@ -2119,10 +2215,13 @@ function exportCSV(){
       const d=getRace(day,r);if(!d)continue;
       let logicCols = ',,,,,,,,,';
       if(r===11||r===12){
-        try{
-          const ls = calcLogicScore(day, r);
-          logicCols = `${ls.coreOk},${ls.brotherChainCount},${ls.domGrp},${ls.convergenceFrames},${ls.jikuUma},${ls.jikuScore},${ls.taiUma},${ls.taiScore},${ls.hitFlag}`;
-        } catch(e){ logicCols = ',,,,,,,,,'; }
+        // v27.2: 軸・対抗(◎○)と診断用データ(核成立等)を別々のtry/catchに分離。
+        // 診断用データの計算が失敗しても、軸・対抗は必ず保存されるようにした。
+        let axisTai = {jikuUma:'',jikuScore:'',taiUma:'',taiScore:'',hitFlag:''};
+        let diag = {coreOk:'',brotherChainCount:'',domGrp:'',convergenceFrames:''};
+        try{ axisTai = calcAxisTai(day, r); }catch(e){}
+        try{ diag = calcLogicScore(day, r); }catch(e){}
+        logicCols = `${diag.coreOk},${diag.brotherChainCount},${diag.domGrp},${diag.convergenceFrames},${axisTai.jikuUma},${axisTai.jikuScore},${axisTai.taiUma},${axisTai.taiScore},${axisTai.hitFlag}`;
       }
       // v26.1: オッズ貼り付けで集めた全頭人気(あれば)をエンコードして最終列に出力
       const fullPop = (d.fullPop) || (day._fullPop && day._fullPop[r]) || null;
