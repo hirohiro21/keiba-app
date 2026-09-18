@@ -136,7 +136,7 @@ tr.miss td{background:rgba(123,45,45,.15);}
 <body>
 <div class="hdr">
   <div><div class="logo">HIRO LOGIC</div><div class="logo-sub">競馬出目パズル分析システム</div></div>
-  <div class="ver">v27.6</div>
+  <div class="ver">v27.7</div>
 </div>
 <div class="wrap">
   <div class="tabs">
@@ -864,9 +864,11 @@ function getAxisCandidates(day,targetR,popMap={},limit=2,frameMap={}){
   });
 
   if(targetR===11){
-    // 11R: 出現回数(重み1.0) + 勝ち癖/1着回数(重み0.5) ※z=3.74で検証済み、最も強い組み合わせ
+    // 11R: 出現回数(重み1.0) + 勝ち癖/1着回数(重み0.8) ※v27.7で0.1刻みの再チューニング実施。
+    // 0.5→0.8に変更し、馬連基準z=3.60→4.54、ワイド基準z=2.84→3.15(0.9ならz=5.01)まで改善。
+    // z値は0.1刻みでばらつきがあり、0.6〜0.9のレンジ全体が0.5より一貫して良かったため、その中間で0.8を採用。
     Object.entries(winCount).forEach(([u,c])=>{
-      add(Number(u),`1着実績${c}回`,0.5*c);
+      add(Number(u),`1着実績${c}回`,0.8*c);
     });
   } else if(targetR===12){
     // 12R: 出現回数(重み1.0) + 兄弟連鎖(重み0.75) ※単体の兄弟連鎖より安定(z=1.72、ワイド基準)
