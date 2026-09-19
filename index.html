@@ -136,7 +136,7 @@ tr.miss td{background:rgba(123,45,45,.15);}
 <body>
 <div class="hdr">
   <div><div class="logo">HIRO LOGIC</div><div class="logo-sub">競馬出目パズル分析システム</div></div>
-  <div class="ver">v27.7</div>
+  <div class="ver">v27.8</div>
 </div>
 <div class="wrap">
   <div class="tabs">
@@ -914,11 +914,45 @@ function getAxisCandidates(day,targetR,popMap={},limit=2,frameMap={}){
   return sorted.slice(0,limit);
 }
 
+// v27.8: 「単勝・複勝オッズ（馬番順）」形式(枠・馬番・馬名・単勝オッズが並ぶ表)を解析。
+// 人気順オッズ表と違い、単勝オッズの値そのものから人気順位を逆算する。
+// 同じ枠に2頭いる場合、2頭目は枠列が空になる（表の見た目通り）ことにも対応。
+// 複勝オッズの範囲行(例:「7.0	-	10.7」)や性齢行は自動的に読み飛ばす。
+function parseOddsWinPlaceFormat(txt){
+  const lines=txt.replace(/\r/g,'').split('\n');
+  const horses=[]; // {frame, uma, odds}
+  let currentFrame=null;
+  for(const raw of lines){
+    const line=raw.trim();
+    if(!line)continue;
+    const m=line.match(/^枠(\d)[白黒赤青黄緑橙桃]?\t(\d{1,2})\t.+?\t([\d.]+)/);
+    if(m){
+      currentFrame=parseInt(m[1]);
+      const uma=parseInt(m[2]);
+      const odds=parseFloat(m[3]);
+      if(uma>=1&&uma<=18)horses.push({frame:currentFrame,uma,odds});
+      continue;
+    }
+    const m2=line.match(/^(\d{1,2})\t.+?\t([\d.]+)/);
+    if(m2&&currentFrame!==null){
+      const uma=parseInt(m2[1]);
+      const odds=parseFloat(m2[2]);
+      if(uma>=1&&uma<=18)horses.push({frame:currentFrame,uma,odds});
+    }
+  }
+  if(!horses.length)return{popMap:{},frameMap:{}};
+  const sorted=[...horses].sort((a,b)=>a.odds-b.odds);
+  const popMap={},frameMap={};
+  sorted.forEach((h,i)=>{popMap[h.uma]=i+1;});
+  horses.forEach(h=>{frameMap[h.uma]=h.frame;});
+  return{popMap,frameMap};
+}
+
 function parseOdds12(){
   const txt=document.getElementById('oddsText12').value;
   if(!txt.trim())return;
   const lines=txt.replace(/\r/g,'').split('\n');
-  const popMap={};
+  let popMap={};
   lines.forEach(line=>{
     const t=line.split(/\t/);if(t.length<2)return;
     const pop=parseInt(t[0].trim());if(isNaN(pop)||pop<1||pop>18)return;
@@ -927,17 +961,25 @@ function parseOdds12(){
     else{uma=parseInt(t[1].trim());}
     if(!isNaN(uma)&&uma>=1&&uma<=18)popMap[uma]=pop;
   });
+  let frameMap={};
+  if(Object.keys(popMap).length===0){
+    // v27.8: 人気順形式で読めなければ「単勝オッズ表(馬番順)」形式を試す
+    const r=parseOddsWinPlaceFormat(txt);
+    popMap=r.popMap;frameMap=r.frameMap;
+  }
   if(Object.keys(popMap).length===0){alert('読み取れませんでした');return;}
   let count=0;
   Object.entries(popMap).forEach(([uma,pop])=>{const el=document.getElementById('pop12grid-'+uma);if(el){el.value=pop;count++;}});
-  alert(count+'頭分の人気を設定しました');
+  let frameCount=0;
+  Object.entries(frameMap).forEach(([uma,frame])=>{const el=document.getElementById('pop12grid-frame-'+uma);if(el){el.value=frame;frameCount++;}});
+  alert(count+'頭分の人気を設定しました'+(frameCount?`（枠番${frameCount}頭分も自動入力）`:''));
 }
 
 function parseOdds(){
   const txt=document.getElementById('oddsText').value;
   if(!txt.trim())return;
   const lines=txt.replace(/\r/g,'').split('\n');
-  const popMap={};
+  let popMap={};
   lines.forEach(line=>{
     const t=line.split(/\t/);if(t.length<2)return;
     const pop=parseInt(t[0].trim());if(isNaN(pop)||pop<1||pop>18)return;
@@ -946,10 +988,18 @@ function parseOdds(){
     else{uma=parseInt(t[1].trim());}
     if(!isNaN(uma)&&uma>=1&&uma<=18)popMap[uma]=pop;
   });
+  let frameMap={};
+  if(Object.keys(popMap).length===0){
+    // v27.8: 人気順形式で読めなければ「単勝オッズ表(馬番順)」形式を試す
+    const r=parseOddsWinPlaceFormat(txt);
+    popMap=r.popMap;frameMap=r.frameMap;
+  }
   if(Object.keys(popMap).length===0){alert('読み取れませんでした');return;}
   let count=0;
   Object.entries(popMap).forEach(([uma,pop])=>{const el=document.getElementById('pop11grid-'+uma);if(el){el.value=pop;count++;}});
-  alert(count+'頭分の人気を設定しました（▶11R軸馬を予測するを押してください）');
+  let frameCount=0;
+  Object.entries(frameMap).forEach(([uma,frame])=>{const el=document.getElementById('pop11grid-frame-'+uma);if(el){el.value=frame;frameCount++;}});
+  alert(count+'頭分の人気を設定しました'+(frameCount?`（枠番${frameCount}頭分も自動入力）`:'')+'（▶11R軸馬を予測するを押してください）');
 }
 
 // v27.5: 出走頭数から枠番を自動計算するJRA公式ルール。
